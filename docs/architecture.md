@@ -72,18 +72,34 @@
 - FastAPI 高性能、自带 OpenAPI 文档、异步支持
 - 与 Electron 通过 HTTP 解耦，便于独立测试
 
-### 3.4 逆地理编码策略（两级）
+### 3.4 逆地理编码策略（三层优化方案）
 
 | 优先级 | 方案 | 适用场景 | 特点 |
 |---|---|---|---|
 | 1（离线快速）| `reverse_geocoder` | 国际通用 | 全球覆盖，速度极快，提供国家/省市 |
 | 1（离线精准）| `fast-geocn` | 中国行政区划 | 中文地名，精度高于国际方案 |
-| 2（在线增强）| 高德地图 API | 需要景点 POI | 提供景点名称，按需调用 |
+| 2（在线增强）| 高德地图 API | 需要景点 POI | 提供景点名称，**按就近聚类懒加载调用** |
 
-**调用策略**：
-1. 默认使用离线方案填充省/市/区（速度快，无网络依赖）
-2. 用户勾选"获取景点名称"后，调用高德 API（需 API Key）
-3. 对已查询的坐标缓存结果（避免重复 API 调用）
+**三层调用策略（POI 聚类优化方案）：**
+
+```
+第一层：网格缓存快查
+  → 将 (lat, lon) 截断至小数点后 3 位（约 100m 网格）作为 key
+  → 命中缓存 → 直接返回，0 次 API 调用
+
+第二层：POI 聚类中心距离判定
+  → 计算照片坐标与"当前活跃 POI 聚类中心"的距离
+  → 距离 ≤ 500m 且 时间差 ≤ 行程切分阈值（默认 2h）→ 归入当前 POI，无需 API
+  → 否则 → 进入第三层
+
+第三层：高德 API 按需查询
+  → 仅在切换景点时触发，结果同时更新网格缓存 + POI 聚类
+  → 典型结果：1000 张照片只需 5-10 次 API 调用（取决于景点数量）
+```
+
+**POI 聚类中心动态更新**：每加入一张新照片，以加权平均更新聚类中心坐标（而非固定为第一张照片的坐标）
+
+**注意**：`fast-geocn` 仅支持中国行政区划，国际坐标自动降级到 `reverse_geocoder`
 
 ### 3.5 数据库：SQLite + SQLAlchemy
 
@@ -282,11 +298,11 @@ CREATE TABLE trips (
     FOREIGN KEY(parent_trip_id) REFERENCES trips(id)
 );
 
--- 逆地理编码缓存
+-- 逆地理编码缓存（网格快查，第一层缓存）
 CREATE TABLE geocode_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    lat_key REAL NOT NULL,            -- 精度截断至 3 位小数
-    lon_key REAL NOT NULL,            -- 精度截断至 3 位小数
+    lat_key REAL NOT NULL,            -- 精度截断至 3 位小数（约 100m 网格）
+    lon_key REAL NOT NULL,
     country TEXT,
     province TEXT,
     city TEXT,
@@ -295,6 +311,23 @@ CREATE TABLE geocode_cache (
     source TEXT,                      -- 'offline' | 'gaode'
     cached_at TEXT,
     UNIQUE(lat_key, lon_key)
+);
+
+-- POI 聚类表（第二层缓存，懒加载聚类优化）
+-- 每个大行程内按时间+距离双因子聚类出的景点集群
+-- API 调用次数 ≈ 景点切换次数，通常远少于照片总数
+CREATE TABLE poi_clusters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trip_id INTEGER,                  -- 关联大行程（同一行程内的 POI）
+    poi_name TEXT,                    -- 景点名称（来自高德 API）
+    city TEXT,                        -- 所属城市
+    center_lat REAL NOT NULL,         -- 聚类中心纬度（加权平均，动态更新）
+    center_lon REAL NOT NULL,         -- 聚类中心经度
+    radius_m REAL DEFAULT 500,        -- 聚类半径阈值（米）
+    file_count INTEGER DEFAULT 0,     -- 归入该 POI 的照片/视频数
+    api_call_triggered BOOLEAN DEFAULT 1,  -- 是否触发过 API 查询（监控用）
+    created_at TEXT,
+    FOREIGN KEY(trip_id) REFERENCES trips(id)
 );
 
 -- 用户调整记录（支持撤销）
