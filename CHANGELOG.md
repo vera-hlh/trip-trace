@@ -6,6 +6,52 @@
 
 ## [Unreleased]
 
+### In Progress
+- Phase 3：前端界面开发（React + Electron）
+
+---
+
+## [0.3.0] - 2026-06-11（Phase 2 完成）
+
+### Added
+
+**Week 2 - 元数据提取 + 数据库（25 测试）**
+- `metadata_service.py`: 照片 EXIF + 视频 ISO 6709 GPS 提取
+- `timezone_utils.py`: UTC→本地时间转换（基于 GPS 坐标查时区）
+- `database.py`: SQLAlchemy async + SQLite 初始化
+- `/api/scan`: SSE 流式扫描进度接口
+
+**Week 3 - 逆地理编码（28 测试）**
+- `geocode_service.py`: 三层优化方案
+  - 第一层：网格缓存（lat/lon 截断 3 位）
+  - 第二层：POI 聚类懒加载（Haversine 双因子，典型 1000 张照片只需 5-10 次 API 调用）
+  - 第三层：高德 API 在线增强（可选）
+- `reverse_geocoder` 集成（全球覆盖，离线）
+
+**Week 4 - 智能归档算法（18 测试）**
+- `archive_service.py`: 行程切分核心算法
+  - 大行程边界（30 天）/ 小行程（地点变化+2h）/ 同地点合并 / GPS 漂移过滤
+  - 地点回归自动检测（A→B→A 模式）
+  - 云南旅行全程模拟测试通过（昆明×2→大理→丽江→香格里拉）
+  - 文件夹命名：`YYYY-MM_行程名 / 序号_地点_MMDD-MMDD`
+- `/api/trips`: GET/PUT/merge 行程管理接口
+- `/api/archive/preview`: 归档预览接口（完整实现）
+
+**Week 5 - 文件操作 + 备注写入（19 测试）**
+- `remark_service.py`: 照片/视频备注写入
+  - EXIF UserComment（8字节null头+UTF-8，支持中文）
+  - 同时写 ImageDescription（Android 相册兼容）
+  - 视频 mutagen ©cmt 标签
+  - 备注模板格式化
+- `file_utils.py`: 安全文件操作（复制/重命名冲突处理/日志）
+- `/api/media/thumbnail`: JPEG 缩略图（等比缩放）
+
+**累计：90/90 测试通过**
+
+---
+
+## [0.1.0] - 2026-06-11（Phase 1 完成）
+
 ### Added
 - 项目初始化，建立基础目录结构
 - 技术架构文档 (docs/architecture.md)
