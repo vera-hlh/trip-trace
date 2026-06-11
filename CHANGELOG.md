@@ -34,9 +34,13 @@
 
 ---
 
-## [0.1.0] - 待发布
+## [0.1.0] - 2026-06-11
 
 ### Added
-- 项目骨架搭建完成
-- 前后端通信验证（`/health` 接口）
-- GitHub 仓库建立
+- 项目骨架搭建完成（Phase 1 完成）
+- Electron + React + Vite + Tailwind CSS 前端脚手架（npm install 336 个包）
+- Python FastAPI 后端（虚拟环境 + FastAPI 0.136.3 + uvicorn + SQLAlchemy）
+- `/health` 接口返回 `{"status":"ok","version":"0.1.0","app":"TripTrace"}`
+- pip 配置国内镜像（清华大学 TUNA）
+- 前后端开发服务器均可启动并联通
+- GitHub 仓库建立（https://github.com/vera-hlh/trip-trace）

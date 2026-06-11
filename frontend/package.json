@@ -4,12 +4,13 @@
   "description": "旅迹 · TripTrace - 旅行照片智能归档工具",
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "concurrently \"vite\" \"electron .\"",
-    "dev:renderer": "vite",
-    "build": "vite build && tsc -p tsconfig.electron.json",
+    "dev": "vite",
+    "dev:renderer": "vite --mode renderer",
+    "build": "vite build",
     "package": "electron-builder",
     "preview": "vite preview"
   },
+  "type": "module",
   "keywords": ["photo", "organizer", "travel", "electron"],
   "author": "vera-hlh",
   "license": "MIT",
