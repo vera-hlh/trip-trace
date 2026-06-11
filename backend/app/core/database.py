@@ -1,21 +1,30 @@
 """
 数据库初始化与连接管理
-使用 SQLAlchemy async + SQLite
+使用 SQLAlchemy async + SQLite (aiosqlite)
 """
+import logging
 import os
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import DeclarativeBase
 
-# 数据库文件存放在用户数据目录
+logger = logging.getLogger(__name__)
+
+# 数据库文件路径（可通过环境变量覆盖）
 DB_PATH = os.environ.get("TRIPRACE_DB_PATH", "triprace.sqlite")
 DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,  # 生产环境关闭 SQL 日志，调试时可设为 True
+    connect_args={"check_same_thread": False},
+)
 
-AsyncSessionLocal = sessionmaker(
+AsyncSessionLocal = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,
     expire_on_commit=False,
+    autocommit=False,
+    autoflush=False,
 )
 
 
@@ -23,17 +32,34 @@ class Base(DeclarativeBase):
     pass
 
 
-async def init_db():
-    """初始化数据库，创建所有表"""
-    from app.models import file, trip, cache  # noqa: 确保模型已注册
+async def init_db() -> None:
+    """
+    初始化数据库，创建所有表（若不存在则创建，已存在则跳过）
+    在 FastAPI startup 事件中调用
+    """
+    # 导入所有模型，确保它们被注册到 Base.metadata
+    from app.models import file, trip, cache  # noqa: F401
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    logger.info(f"数据库初始化完成：{DB_PATH}")
+
 
 async def get_db():
-    """FastAPI 依赖注入：获取数据库会话"""
+    """
+    FastAPI 依赖注入：获取数据库会话
+    用法：
+        @router.get("/xxx")
+        async def handler(db: AsyncSession = Depends(get_db)):
+            ...
+    """
     async with AsyncSessionLocal() as session:
         try:
             yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
         finally:
             await session.close()
