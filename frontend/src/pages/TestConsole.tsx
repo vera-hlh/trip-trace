@@ -294,9 +294,13 @@ export default function TestConsole() {
               setScanEvents((prev) => [...prev.slice(-500), event]); // 最多保留 500 条
 
               if (event.type === "complete") {
-                addLog(
-                  `扫描完成: ${event.total_files || 0} 个文件，${event.with_gps} 有GPS，${event.without_gps} 无GPS，${event.errors} 错误`
-                );
+                const skipped = event.skipped || 0;
+                const newFiles = event.new_files || 0;
+                if (skipped > 0 && newFiles === 0) {
+                  addLog(`扫描完成: ${event.total_files}个文件（全部已在DB中跳过，GPS统计不变）`);
+                } else {
+                  addLog(`扫描完成: 新增${newFiles}个 | 有GPS:${event.with_gps} 无GPS:${event.without_gps} | 跳过:${skipped}个(已在DB)`);
+                }
               } else if (event.type === "error") {
                 addLog(`扫描错误: ${event.file} - ${event.message}`);
               }
