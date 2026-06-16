@@ -19,25 +19,53 @@ export interface AppSettings {
   copyMode: boolean; // true=复制, false=移动
 }
 
+// ── 行程树数据结构（来自 archive/preview，可用户编辑）────────
+
+export interface SubTripData {
+  folder: string;      // 原始文件夹名（后端生成）
+  displayName: string; // 用户可编辑显示名称
+  location: string;
+  start_date: string | null;
+  end_date: string | null;
+  file_count: number;
+}
+
+export interface BigTripData {
+  folder: string;      // 原始文件夹名（后端生成）
+  displayName: string; // 用户可编辑显示名称
+  start_date: string | null;
+  end_date: string | null;
+  total_files: number;
+  sub_trips: SubTripData[];
+}
+
+// ── State 接口 ────────────────────────────────────────────────
+
 interface AppState {
   // 页面导航
   currentPage: AppPage;
   setCurrentPage: (page: AppPage) => void;
 
-  // 文件夹路径
+  // 文件夹路径（持久化）
   sourceFolderPath: string;
   outputFolderPath: string;
   setSourceFolderPath: (path: string) => void;
   setOutputFolderPath: (path: string) => void;
 
-  // 归档参数
+  // 归档参数（持久化）
   settings: AppSettings;
   updateSettings: (patch: Partial<AppSettings>) => void;
 
-  // 后端状态
+  // 行程树（持久化 - 用户可能已编辑重命名/合并）
+  tripStructure: BigTripData[] | null;
+  setTripStructure: (trips: BigTripData[] | null) => void;
+
+  // 后端连接状态（不持久化，运行时检测）
   backendReady: boolean;
   setBackendReady: (ready: boolean) => void;
 }
+
+// ── Store 实例 ────────────────────────────────────────────────
 
 export const useAppStore = create<AppState>()(
   persist(
@@ -46,13 +74,13 @@ export const useAppStore = create<AppState>()(
       currentPage: "home",
       setCurrentPage: (page) => set({ currentPage: page }),
 
-      // 路径（持久化）
+      // 路径
       sourceFolderPath: "",
       outputFolderPath: "",
       setSourceFolderPath: (path) => set({ sourceFolderPath: path }),
       setOutputFolderPath: (path) => set({ outputFolderPath: path }),
 
-      // 归档参数（持久化）
+      // 归档参数
       settings: {
         bigTripThresholdDays: 30,
         smallTripThresholdHours: 2,
@@ -61,17 +89,21 @@ export const useAppStore = create<AppState>()(
       updateSettings: (patch) =>
         set((s) => ({ settings: { ...s.settings, ...patch } })),
 
-      // 后端状态（不持久化）
+      // 行程树
+      tripStructure: null,
+      setTripStructure: (trips) => set({ tripStructure: trips }),
+
+      // 后端状态
       backendReady: false,
       setBackendReady: (ready) => set({ backendReady: ready }),
     }),
     {
       name: "trip-trace-app",
-      // 只持久化路径和参数，不持久化 UI 状态
       partialize: (s) => ({
         sourceFolderPath: s.sourceFolderPath,
         outputFolderPath: s.outputFolderPath,
         settings: s.settings,
+        tripStructure: s.tripStructure,
       }),
     }
   )

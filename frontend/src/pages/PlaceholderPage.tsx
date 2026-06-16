@@ -1,6 +1,7 @@
 /**
  * PlaceholderPage.tsx
- * 占位页面，用于 Week 7-9 尚未开发的页面
+ * 占位页面，用于 Week 8-9 尚未开发的页面
+ * （Week 7 ScanPage 已实现，移至 ScanPage.tsx）
  */
 import { useAppStore, AppPage } from "@/store/appStore";
 import clsx from "clsx";
@@ -41,18 +42,6 @@ export function PlaceholderPage({ icon, title, week, desc, prevPage }: Placehold
 }
 
 // ── 各页占位组件 ─────────────────────────────────────────────
-
-export function ScanPage() {
-  return (
-    <PlaceholderPage
-      icon="🔍"
-      title="扫描文件夹"
-      week="Week 7"
-      desc="扫描进度实时显示、行程树形视图（大行程 → 子行程）、支持合并/拆分/重命名行程。"
-      prevPage={{ id: "folder-setup", label: "文件夹选择" }}
-    />
-  );
-}
 
 export function ArchivePage() {
   return (
