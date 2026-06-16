@@ -77,7 +77,7 @@ async def archive_preview(
 
     try:
         # 路径规范化（处理双反斜杠、正斜杠等混用问题）
-        import os
+        # 注意：os 已在文件顶部 import，勿在函数内重复 import（会导致作用域 bug）
         norm_folder = os.path.normpath(request.folder_path)
 
         # 从数据库获取已扫描的文件
@@ -128,12 +128,15 @@ async def archive_preview(
 
         media_items = []
         for f in db_files:
-            from datetime import datetime
+            from datetime import datetime, timezone
             dt = None
             if f.datetime_original:
                 try:
                     dt = datetime.fromisoformat(f.datetime_original)
-                except ValueError:
+                    # 统一转为 offset-naive（去掉时区信息），避免比较时报错
+                    if dt.tzinfo is not None:
+                        dt = dt.replace(tzinfo=None)
+                except (ValueError, AttributeError):
                     pass
 
             # 构建地点键（用于行程切分）
