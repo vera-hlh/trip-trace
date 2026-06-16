@@ -125,6 +125,23 @@ async function openFolderPicker(): Promise<{ path: string; isFullPath: boolean }
   return null; // 环境不支持
 }
 
+/**
+ * 根据已有路径推断父目录，拼接新的文件夹名称
+ * 例：当前路径 "C:\Users\Eva\Pictures\旧文件夹"，新选择文件夹名 "新文件夹"
+ *     → 推断为 "C:\Users\Eva\Pictures\新文件夹"
+ */
+function inferFullPath(existingPath: string, folderName: string): string {
+  if (!existingPath || !isAbsolutePath(existingPath)) {
+    return folderName;
+  }
+  const sep = existingPath.includes("\\") ? "\\" : "/";
+  const parts = existingPath.split(sep).filter(Boolean);
+  const parentParts = parts.slice(0, -1);
+  const parent = parentParts.join(sep);
+  const prefix = parent.length <= 2 ? parent + sep : parent;
+  return prefix + sep + folderName;
+}
+
 export default function TestConsole() {
   // 参数状态
   const [folderPath, setFolderPath] = useState(
@@ -154,13 +171,19 @@ export default function TestConsole() {
       setFolderPath(path);
       setPickerNote("");
     } else {
-      // 浏览器模式：仅返回文件夹名，不自动填入，让用户手动确认路径
-      setPickerNote(
-        `📂 选中了文件夹"${path}"。浏览器安全限制无法获取完整路径，请在上方输入框手动输入完整路径（如 C:\\Users\\...\\${path}）`
-      );
-      // 只有当前路径为空时才填入文件夹名作为参考
-      if (!folderPath) {
-        setFolderPath(path);
+      // 浏览器模式：只能获取文件夹名，自动推断完整路径
+      const guessed = inferFullPath(folderPath, path);
+      if (isAbsolutePath(guessed)) {
+        // 推断成功，直接填入并提示
+        setFolderPath(guessed);
+        setPickerNote(
+          `📂 已根据当前路径推断为"${guessed}"，如不正确请手动修改`
+        );
+      } else {
+        // 无法推断，让用户补全
+        setPickerNote(
+          `📂 选中了文件夹"${path}"。请在上方输入框中输入完整路径（如 C:\\Users\\...\\${path}）`
+        );
       }
     }
   };
@@ -176,11 +199,16 @@ export default function TestConsole() {
       setOutputPath(path);
       setPickerNote("");
     } else {
-      setPickerNote(
-        `📂 选中了文件夹"${path}"。浏览器安全限制无法获取完整路径，请手动输入完整路径（如 C:\\Users\\...\\${path}）`
-      );
-      if (!outputPath) {
-        setOutputPath(path);
+      const guessed = inferFullPath(outputPath, path);
+      if (isAbsolutePath(guessed)) {
+        setOutputPath(guessed);
+        setPickerNote(
+          `📂 已根据当前路径推断为"${guessed}"，如不正确请手动修改`
+        );
+      } else {
+        setPickerNote(
+          `📂 选中了文件夹"${path}"。请输入完整路径（如 C:\\Users\\...\\${path}）`
+        );
       }
     }
   };
