@@ -128,12 +128,15 @@ frontend/electron/
 - ✅ 支持合并相邻子行程（合并↓按钮，本地状态管理）
 - ✅ 行程树持久化到 localStorage（切页再回来不丢失）
 
-### Week 8：归档预览 + 执行（下一步）
-- [ ] 归档预览页面（确认后才执行）
-- [ ] 参数配置面板（时间阈值/地点粒度/备注模板）
-- [ ] 执行归档（复制模式）+ 进度显示
+### ✅ Week 8 - 完成
+- ✅ 归档预览页面（只读行程树 + 重命名标记显示）
+- ✅ 参数配置面板（时间阈值只读汇总 + 备注写入开关 + 模板输入）
+- ✅ 二次确认勾选框，防止误操作
+- ✅ 执行归档（SSE 流式进度条 + 当前文件显示）
+- ✅ 完成摘要（已复制/跳过/失败/备注写入）+ 打开输出目录按钮
+- ✅ 后端 /api/archive/execute 支持用户重命名覆盖（trip_overrides）
 
-### Week 9：地图展示
+### Week 9：地图展示（下一步）
 - [ ] Folium HTML 地图内嵌（路径+热点）
 - [ ] 热点点击查看该地照片
 
@@ -168,9 +171,8 @@ cd C:\Dev\trip-trace\backend
 我在开发一个名为"旅迹 TripTrace"的 Windows 桌面照片归档工具。
 项目在 C:\Dev\trip-trace，GitHub 在 https://github.com/vera-hlh/trip-trace。
 
-Phase 1+2+3-Week6 已完成，详情见 docs/handoff-phase3.md。
-现在开始 Phase 3 Week 7（扫描进度 + 行程树）：
-- 扫描进度页面（SSE 实时进度条）
-- 行程树形视图（大行程 → 子行程）
-- 支持合并/拆分/重命名行程
+Phase 1+2+3（Week6~8）已完成，详情见 docs/handoff-phase3.md。
+现在开始 Phase 3 Week 9（地图展示）：
+- Folium HTML 地图内嵌（路径 + 热点）
+- 热点点击查看该地照片
 ```

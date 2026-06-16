@@ -1,7 +1,7 @@
 /**
  * PlaceholderPage.tsx
- * 占位页面，用于 Week 8-9 尚未开发的页面
- * （Week 7 ScanPage 已实现，移至 ScanPage.tsx）
+ * 占位页面，用于 Week 9 尚未开发的页面
+ * （Week 7 ScanPage、Week 8 ArchivePage 已实现，移至各自文件）
  */
 import { useAppStore, AppPage } from "@/store/appStore";
 import clsx from "clsx";

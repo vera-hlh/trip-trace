@@ -9,7 +9,8 @@ import { useAppStore } from "@/store/appStore";
 import HomePage from "@/pages/HomePage";
 import FolderSetup from "@/pages/FolderSetup";
 import ScanPage from "@/pages/ScanPage";
-import { ArchivePage, MapPage } from "@/pages/PlaceholderPage";
+import ArchivePage from "@/pages/ArchivePage";
+import { MapPage } from "@/pages/PlaceholderPage";
 import TestConsole from "@/pages/TestConsole";
 
 function PageRouter() {
