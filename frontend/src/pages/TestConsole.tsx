@@ -308,10 +308,42 @@ export default function TestConsole() {
 
   const fetchScanStatus = async () => {
     try {
+      // 获取整体数据库状态
       const res = await fetch(`${API}/api/scan/status`);
       const data = await res.json();
       setScanStatus(data);
-      addLog(`状态: 共 ${data.total_files} 个文件，${data.with_gps} 有GPS，${data.photos} 照片，${data.videos} 视频`);
+
+      // 同时统计当前文件夹在数据库中的记录数
+      if (folderPath && isAbsolutePath(folderPath)) {
+        try {
+          const previewRes = await fetch(`${API}/api/archive/preview`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              folder_path: folderPath,
+              output_path: folderPath + "_归档",
+              options: { big_trip_threshold_days: 999, small_trip_threshold_hours: 0.01 },
+            }),
+          });
+          if (previewRes.ok) {
+            const previewData = await previewRes.json();
+            const folderCount = previewData?.data?.summary?.total_files ?? 0;
+            const folderGps = previewData?.data?.summary?.files_without_gps !== undefined
+              ? folderCount - previewData.data.summary.files_without_gps
+              : "?";
+            addLog(
+              `状态(DB全部): 共 ${data.total_files} 个文件 | ` +
+              `当前文件夹已扫描: ${folderCount} 个文件（${folderGps} 有GPS）`
+            );
+          } else {
+            addLog(`状态: DB共 ${data.total_files} 个文件，${data.with_gps} 有GPS，${data.photos} 照片，${data.videos} 视频`);
+          }
+        } catch {
+          addLog(`状态: DB共 ${data.total_files} 个文件，${data.with_gps} 有GPS，${data.photos} 照片，${data.videos} 视频`);
+        }
+      } else {
+        addLog(`状态: DB共 ${data.total_files} 个文件，${data.with_gps} 有GPS，${data.photos} 照片，${data.videos} 视频`);
+      }
     } catch (e) {
       addLog(`获取状态失败: ${e}`);
     }
