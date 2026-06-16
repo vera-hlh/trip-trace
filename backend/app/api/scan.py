@@ -252,10 +252,56 @@ async def get_scan_status(db: AsyncSession = Depends(get_db)):
 
 @router.delete("/scan/clear")
 async def clear_scan_data(db: AsyncSession = Depends(get_db)):
-    """
-    清空扫描数据（开发调试用）
-    """
+    """清空扫描数据（开发调试用）"""
     from sqlalchemy import delete
     await db.execute(delete(MediaFile))
     await db.commit()
     return {"success": True, "message": "扫描数据已清空"}
+
+
+@router.post("/scan/geocode")
+async def geocode_scanned_files(db: AsyncSession = Depends(get_db)):
+    """
+    对已扫描的有 GPS 但无城市信息的文件批量做逆地理编码
+    返回更新数量统计
+    """
+    from app.services.geocode_service import reverse_geocode_offline
+
+    # 查找有 GPS 但 city 为空的文件
+    result = await db.execute(
+        select(MediaFile).where(
+            MediaFile.has_gps == True,
+            MediaFile.city.is_(None)
+        ).limit(500)  # 每次最多处理 500 个
+    )
+    files = result.scalars().all()
+
+    if not files:
+        return {"success": True, "updated": 0, "message": "无需要地理编码的文件"}
+
+    updated = 0
+    errors = 0
+    for f in files:
+        if not f.latitude or not f.longitude:
+            continue
+        try:
+            loc = reverse_geocode_offline(f.latitude, f.longitude)
+            if loc:
+                f.country = loc.country
+                f.province = loc.province
+                f.city = loc.city
+                f.district = loc.district
+                updated += 1
+        except Exception as e:
+            errors += 1
+            logger.warning(f"地理编码失败 {f.file_name}: {e}")
+
+    await db.commit()
+
+    return {
+        "success": True,
+        "updated": updated,
+        "errors": errors,
+        "total_processed": len(files),
+        "message": f"已为 {updated} 个文件更新地理位置信息"
+    }

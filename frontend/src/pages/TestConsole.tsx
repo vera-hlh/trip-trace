@@ -158,6 +158,17 @@ export default function TestConsole() {
   // 运行状态
   const [scanning, setScanning] = useState(false);
   const [previewing, setPreviewing] = useState(false);
+  const [geocoding, setGeocoding] = useState(false);
+
+  // 展开的子行程（存 folder 名称）
+  const [expandedTrips, setExpandedTrips] = useState<Set<string>>(new Set());
+  const toggleTrip = (folder: string) => {
+    setExpandedTrips(prev => {
+      const next = new Set(prev);
+      next.has(folder) ? next.delete(folder) : next.add(folder);
+      return next;
+    });
+  };
 
   // 选择源文件夹
   const handleSelectFolder = async () => {
@@ -395,6 +406,28 @@ export default function TestConsole() {
   };
 
   // ============================================================
+  // 逆地理编码
+  // ============================================================
+
+  const handleGeocode = async () => {
+    setGeocoding(true);
+    addLog("开始逆地理编码（将 GPS 坐标转为城市名）...");
+    try {
+      const res = await fetch(`${API}/api/scan/geocode`, { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        addLog(`地理编码完成: 更新 ${data.updated} 个文件（共处理 ${data.total_processed} 个）`);
+      } else {
+        addLog(`地理编码失败: ${JSON.stringify(data)}`);
+      }
+    } catch (e) {
+      addLog(`地理编码请求失败: ${e}`);
+    } finally {
+      setGeocoding(false);
+    }
+  };
+
+  // ============================================================
   // 渲染
   // ============================================================
 
@@ -561,6 +594,15 @@ export default function TestConsole() {
               >
                 {previewing ? "⏳ 生成中..." : "📋 归档预览"}
               </button>
+
+              <button
+                onClick={handleGeocode}
+                disabled={geocoding}
+                className="w-full py-2.5 bg-purple-700 hover:bg-purple-600 disabled:bg-gray-700 disabled:text-gray-500 rounded-lg font-medium text-sm transition"
+                title="将扫描结果中的 GPS 坐标转为城市/省份名称，需要先完成扫描"
+              >
+                {geocoding ? "⏳ 地理编码中..." : "🌍 逆地理编码"}
+              </button>
             </div>
 
             {/* 扫描状态卡片 */}
@@ -700,22 +742,50 @@ export default function TestConsole() {
 
                         {/* 子行程列表 */}
                         <div className="divide-y divide-gray-700/50">
-                          {bigTrip.sub_trips.map((sub, si) => (
-                            <div key={si} className="px-4 py-2 flex items-center justify-between hover:bg-gray-700/30">
-                              <div className="flex items-center gap-3">
-                                <span className="text-gray-500 text-xs w-4 text-right">{si + 1}</span>
-                                <span className="text-emerald-300 font-mono text-sm">
-                                  📂 {sub.folder}
-                                </span>
-                                <span className="text-xs text-gray-500 bg-gray-700 px-1.5 py-0.5 rounded">
-                                  {sub.location || "未知地点"}
-                                </span>
+                          {bigTrip.sub_trips.map((sub, si) => {
+                            const tripKey = `${bigTrip.folder}/${sub.folder}`;
+                            const isExpanded = expandedTrips.has(tripKey);
+                            const subFiles = previewData.preview.filter(
+                              p => p.sub_trip_folder === sub.folder && p.big_trip_folder === bigTrip.folder
+                            );
+                            return (
+                              <div key={si}>
+                                {/* 子行程行 */}
+                                <div
+                                  className="px-4 py-2 flex items-center justify-between hover:bg-gray-700/30 cursor-pointer"
+                                  onClick={() => toggleTrip(tripKey)}
+                                >
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-gray-500 text-xs w-4 text-right">{si + 1}</span>
+                                    <span className="text-emerald-300 font-mono text-sm">
+                                      📂 {sub.folder}
+                                    </span>
+                                    <span className="text-xs text-gray-500 bg-gray-700 px-1.5 py-0.5 rounded">
+                                      {sub.location || "未知地点"}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-3 text-xs text-gray-400">
+                                    <span>{sub.file_count} 个文件 · {sub.start_date?.slice(5, 10)} → {sub.end_date?.slice(5, 10)}</span>
+                                    <span className="text-gray-500">{isExpanded ? "▲" : "▼"}</span>
+                                  </div>
+                                </div>
+                                {/* 展开的文件列表 */}
+                                {isExpanded && subFiles.length > 0 && (
+                                  <div className="bg-gray-900/60 px-4 py-2 border-t border-gray-700/50">
+                                    <div className="text-xs text-gray-500 mb-1.5">📄 文件列表（{subFiles.length} 个）</div>
+                                    <div className="space-y-0.5 max-h-48 overflow-y-auto">
+                                      {subFiles.map((f, fi) => (
+                                        <div key={fi} className="flex items-center gap-2 text-xs font-mono">
+                                          <span className="text-gray-600 w-5 text-right">{fi + 1}.</span>
+                                          <span className="text-gray-300">{f.file_name}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
-                              <div className="text-xs text-gray-400">
-                                {sub.file_count} 个文件 · {sub.start_date?.slice(5, 10)} → {sub.end_date?.slice(5, 10)}
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     ))}
