@@ -735,15 +735,27 @@ export default function ScanPage() {
                 <span>12h</span>
               </div>
             </div>
-            <label className="col-span-2 flex items-center gap-2 text-xs text-slate-400 cursor-pointer w-fit">
-              <input
-                type="checkbox"
-                checked={clearBeforeScan}
-                onChange={(e) => setClearBeforeScan(e.target.checked)}
-                className="accent-blue-500"
-              />
-              扫描前清空数据库旧数据
-            </label>
+            <div className="col-span-2 space-y-1.5">
+              <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer w-fit">
+                <input
+                  type="checkbox"
+                  checked={clearBeforeScan}
+                  onChange={(e) => setClearBeforeScan(e.target.checked)}
+                  className="accent-blue-500"
+                />
+                扫描前清空数据库旧数据
+              </label>
+              <div className="ml-5 text-xs text-slate-600 leading-relaxed space-y-0.5">
+                <div>
+                  <span className="text-slate-500">✅ 勾选：</span>
+                  更换了源文件夹、或想重新整理之前的扫描结果时使用
+                </div>
+                <div>
+                  <span className="text-slate-500">⬜ 不勾选（默认）：</span>
+                  增量扫描新照片，已有记录直接跳过，适合在原文件夹新增了照片后补扫
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
