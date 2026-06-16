@@ -136,9 +136,14 @@ frontend/electron/
 - ✅ 完成摘要（已复制/跳过/失败/备注写入）+ 打开输出目录按钮
 - ✅ 后端 /api/archive/execute 支持用户重命名覆盖（trip_overrides）
 
-### Week 9：地图展示（下一步）
-- [ ] Folium HTML 地图内嵌（路径+热点）
-- [ ] 热点点击查看该地照片
+### ✅ Week 9 - 完成
+- ✅ Folium HTML 地图内嵌（`<iframe srcDoc>`，CartoDB positron 底图）
+- ✅ 行程轨迹虚线（按时间顺序连接所有 GPS 点）
+- ✅ 城市热点 CircleMarker（半径随照片数对数缩放，13色区分）
+- ✅ 热点弹窗（城市名 + 张数 + 查看照片按钮）
+- ✅ 热点点击 → postMessage → 右侧侧边栏展示缩略图网格
+- ✅ 缩略图懒加载（`/api/media/thumbnail`）
+- ✅ 点击照片 → Electron IPC 用系统程序打开
 
 ### 后续待接入（已记录）
 - [ ] **Week 3 POI 地名**：目前逆地理编码仅到城市级别，具体 POI 地名需申请第三方 API（高德/百度/腾讯地图 API），建议安排在 Week 8 归档功能完成后、Week 9 地图展示前进行接入和调试

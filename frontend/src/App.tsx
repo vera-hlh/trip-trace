@@ -10,7 +10,7 @@ import HomePage from "@/pages/HomePage";
 import FolderSetup from "@/pages/FolderSetup";
 import ScanPage from "@/pages/ScanPage";
 import ArchivePage from "@/pages/ArchivePage";
-import { MapPage } from "@/pages/PlaceholderPage";
+import MapPage from "@/pages/MapPage";
 import TestConsole from "@/pages/TestConsole";
 
 function PageRouter() {
