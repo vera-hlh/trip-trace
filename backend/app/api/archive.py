@@ -76,13 +76,33 @@ async def archive_preview(
         raise HTTPException(status_code=400, detail=f"文件夹不存在: {request.folder_path}")
 
     try:
+        # 路径规范化（处理双反斜杠、正斜杠等混用问题）
+        import os
+        norm_folder = os.path.normpath(request.folder_path)
+
         # 从数据库获取已扫描的文件
+        # 使用多种路径格式匹配（兼容 Windows 反斜杠存储差异）
+        from sqlalchemy import or_
         result = await db.execute(
             select(MediaFile).where(
-                MediaFile.original_path.like(f"{request.folder_path}%")
+                or_(
+                    MediaFile.original_path.like(f"{norm_folder}%"),
+                    MediaFile.original_path.like(f"{norm_folder.replace(chr(92), chr(92)*2)}%"),
+                    MediaFile.original_path.like(f"{norm_folder.replace(chr(92), '/')}%"),
+                )
             ).order_by(MediaFile.datetime_original)
         )
         db_files = result.scalars().all()
+
+        # 如果还是没有结果，做宽松匹配（取路径最后部分）
+        if not db_files:
+            folder_name = os.path.basename(norm_folder)
+            result2 = await db.execute(
+                select(MediaFile).where(
+                    MediaFile.original_path.contains(folder_name)
+                ).order_by(MediaFile.datetime_original)
+            )
+            db_files = result2.scalars().all()
 
         if not db_files:
             return {
