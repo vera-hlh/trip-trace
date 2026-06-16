@@ -113,8 +113,76 @@ def _country_code_to_name(cc: str) -> str:
         "AU": "澳大利亚", "CA": "加拿大", "TH": "泰国", "SG": "新加坡",
         "MY": "马来西亚", "VN": "越南", "ID": "印度尼西亚", "PH": "菲律宾",
         "IN": "印度", "NP": "尼泊尔", "NZ": "新西兰", "MX": "墨西哥",
+        "RU": "俄罗斯", "MN": "蒙古",
     }
     return mapping.get(cc.upper(), cc)
+
+
+# 中国省份英文→中文映射
+_PROVINCE_MAP: dict[str, str] = {
+    "Beijing Shi": "北京市", "Tianjin Shi": "天津市", "Shanghai Shi": "上海市",
+    "Chongqing Shi": "重庆市",
+    "Hebei Sheng": "河北省", "Shanxi Sheng": "山西省", "Liaoning Sheng": "辽宁省",
+    "Jilin Sheng": "吉林省", "Heilongjiang Sheng": "黑龙江省",
+    "Jiangsu Sheng": "江苏省", "Zhejiang Sheng": "浙江省", "Anhui Sheng": "安徽省",
+    "Fujian Sheng": "福建省", "Jiangxi Sheng": "江西省", "Shandong Sheng": "山东省",
+    "Henan Sheng": "河南省", "Hubei Sheng": "湖北省", "Hunan Sheng": "湖南省",
+    "Guangdong Sheng": "广东省", "Hainan Sheng": "海南省",
+    "Sichuan Sheng": "四川省", "Guizhou Sheng": "贵州省", "Yunnan Sheng": "云南省",
+    "Shaanxi Sheng": "陕西省", "Gansu Sheng": "甘肃省", "Qinghai Sheng": "青海省",
+    "Nei Mongol Zizhiqu": "内蒙古自治区", "Guangxi Zhuangzu Zizhiqu": "广西壮族自治区",
+    "Xizang Zizhiqu": "西藏自治区", "Ningxia Huizu Zizhiqu": "宁夏回族自治区",
+    "Xinjiang Uygur Zizhiqu": "新疆维吾尔自治区",
+    "Hong Kong": "香港", "Macao": "澳门",
+}
+
+# 中国城市英文→中文映射（主要城市 + 旅游目的地）
+_CITY_MAP: dict[str, str] = {
+    # 东北
+    "Harbin": "哈尔滨", "Shenyang": "沈阳", "Dalian": "大连",
+    "Changchun": "长春", "Jilin": "吉林", "Mudanjiang": "牡丹江",
+    "Qiqihar": "齐齐哈尔", "Daqing": "大庆", "Jiamusi": "佳木斯",
+    "Xilinji": "西林吉", "Mohe": "漠河",
+    "Erdaobaihe": "二道白河", "Baihe": "白河", "Sandao": "三道",
+    "Manjiang": "漫江", "Fusong": "抚松",
+    # 华北
+    "Beijing": "北京", "Tianjin": "天津", "Shijiazhuang": "石家庄",
+    "Taiyuan": "太原", "Hohhot": "呼和浩特", "Baotou": "包头",
+    # 华东
+    "Shanghai": "上海", "Nanjing": "南京", "Hangzhou": "杭州",
+    "Suzhou": "苏州", "Wuxi": "无锡", "Ningbo": "宁波",
+    "Hefei": "合肥", "Fuzhou": "福州", "Xiamen": "厦门",
+    "Jinan": "济南", "Qingdao": "青岛", "Nanchang": "南昌",
+    # 华南
+    "Guangzhou": "广州", "Shenzhen": "深圳", "Zhuhai": "珠海",
+    "Dongguan": "东莞", "Foshan": "佛山", "Nanning": "南宁",
+    "Haikou": "海口", "Sanya": "三亚",
+    # 西南
+    "Chengdu": "成都", "Chongqing": "重庆", "Kunming": "昆明",
+    "Guiyang": "贵阳", "Lhasa": "拉萨", "Dali": "大理",
+    "Lijiang": "丽江", "Shangri-La": "香格里拉", "Zhongdian": "中甸",
+    "Xishuangbanna": "西双版纳", "Jinghong": "景洪",
+    # 西北
+    "Xi'an": "西安", "Lanzhou": "兰州", "Xining": "西宁",
+    "Yinchuan": "银川", "Urumqi": "乌鲁木齐",
+    # 华中
+    "Wuhan": "武汉", "Zhengzhou": "郑州", "Changsha": "长沙",
+    # 直辖市/特别
+    "Hong Kong": "香港", "Macao": "澳门",
+}
+
+
+def translate_cn_location(city: str, province: str) -> tuple[str, str]:
+    """
+    将英文城市/省份名翻译为中文（中国境内）
+    同时生成"城市 (City)" 双语格式
+
+    Returns:
+        (中文城市名, 中文省份名) 或原始英文（若无对应翻译）
+    """
+    cn_city = _CITY_MAP.get(city, city)
+    cn_province = _PROVINCE_MAP.get(province, province)
+    return cn_city, cn_province
 
 
 # ============================================================

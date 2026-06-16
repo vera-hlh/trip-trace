@@ -279,6 +279,8 @@ async def geocode_scanned_files(db: AsyncSession = Depends(get_db)):
     if not files:
         return {"success": True, "updated": 0, "message": "无需要地理编码的文件"}
 
+    from app.services.geocode_service import translate_cn_location
+
     updated = 0
     errors = 0
     for f in files:
@@ -287,9 +289,16 @@ async def geocode_scanned_files(db: AsyncSession = Depends(get_db)):
         try:
             loc = reverse_geocode_offline(f.latitude, f.longitude)
             if loc:
+                # 对中国地名做中英文翻译
+                if loc.country_code == "CN":
+                    cn_city, cn_province = translate_cn_location(loc.city, loc.province)
+                    # 格式：若有中文翻译则用"中文 (English)"，否则保留原英文
+                    f.city = f"{cn_city} ({loc.city})" if cn_city != loc.city else loc.city
+                    f.province = f"{cn_province} ({loc.province})" if cn_province != loc.province else loc.province
+                else:
+                    f.city = loc.city
+                    f.province = loc.province
                 f.country = loc.country
-                f.province = loc.province
-                f.city = loc.city
                 f.district = loc.district
                 updated += 1
         except Exception as e:
