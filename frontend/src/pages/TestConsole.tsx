@@ -477,6 +477,12 @@ export default function TestConsole() {
                   {pickerNote}
                 </div>
               )}
+
+              {/* 浏览器模式操作说明 */}
+              <div className="text-xs text-gray-500 leading-relaxed space-y-1 pt-1 border-t border-gray-700">
+                <div>💡 <span className="text-gray-400">📂 按钮</span>：浏览器模式下只能推断父目录，若路径有误请直接在输入框手动修改</div>
+                <div>🔒 <span className="text-gray-400">归档预览</span>：纯虚拟操作，<strong className="text-emerald-400">不会</strong>创建文件夹或复制文件</div>
+              </div>
             </div>
 
             {/* 归档算法参数 */}
