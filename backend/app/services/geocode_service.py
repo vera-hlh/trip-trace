@@ -213,10 +213,12 @@ async def reverse_geocode_gaode(
     try:
         import httpx
         # 高德 API 坐标格式：经度,纬度
+        # coordsys=gps 告知高德输入为 WGS-84（照片 EXIF 标准坐标系）
+        # 不加此参数默认按 GCJ-02（火星坐标）处理，会导致中国境内偏移数百米
         url = (
             f"https://restapi.amap.com/v3/geocode/regeo"
             f"?output=json&location={lon},{lat}&key={api_key}"
-            f"&radius=1000&extensions=all"
+            f"&radius=1000&extensions=all&coordsys=gps"
         )
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(url)
