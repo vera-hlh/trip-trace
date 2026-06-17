@@ -86,6 +86,71 @@ def scan_folder(folder_path: str) -> list[str]:
 # 照片元数据提取
 # ============================================================
 
+# ============================================================
+# 坐标系转换工具（GCJ-02 → WGS-84）
+# ============================================================
+
+def _gcj02_to_wgs84(lng: float, lat: float) -> tuple[float, float]:
+    """
+    将 GCJ-02（火星坐标）逆转换为 WGS-84（国际GPS标准）
+
+    仅对中国大陆境内的坐标有效（大约在 72°E~135°E, 3°N~53°N 范围内）。
+    境外坐标直接返回原值。
+
+    算法来源：公开的 GCJ-02 偏移量计算公式（逆变换近似）
+    精度：约 1-3 米以内
+    """
+    import math
+
+    def _is_in_china(lng: float, lat: float) -> bool:
+        """粗略判断坐标是否在中国大陆范围内"""
+        return 72.0 < lng < 137.8 and 0.8 < lat < 55.8
+
+    if not _is_in_china(lng, lat):
+        return lng, lat  # 境外坐标无需转换
+
+    a = 6378245.0  # 克拉索夫斯基椭球体长半轴
+    ee = 0.00669342162296594323  # 第一偏心率平方
+
+    def _transform_lat(x: float, y: float) -> float:
+        ret = (-100.0 + 2.0*x + 3.0*y + 0.2*y*y + 0.1*x*y
+               + 0.2*math.sqrt(abs(x)))
+        ret += (20.0*math.sin(6.0*x*math.pi)
+                + 20.0*math.sin(2.0*x*math.pi)) * 2.0 / 3.0
+        ret += (20.0*math.sin(y*math.pi)
+                + 40.0*math.sin(y/3.0*math.pi)) * 2.0 / 3.0
+        ret += (160.0*math.sin(y/12.0*math.pi)
+                + 320.0*math.sin(y*math.pi/30.0)) * 2.0 / 3.0
+        return ret
+
+    def _transform_lng(x: float, y: float) -> float:
+        ret = (300.0 + x + 2.0*y + 0.1*x*x + 0.1*x*y
+               + 0.1*math.sqrt(abs(x)))
+        ret += (20.0*math.sin(6.0*x*math.pi)
+                + 20.0*math.sin(2.0*x*math.pi)) * 2.0 / 3.0
+        ret += (20.0*math.sin(x*math.pi)
+                + 40.0*math.sin(x/3.0*math.pi)) * 2.0 / 3.0
+        ret += (150.0*math.sin(x/12.0*math.pi)
+                + 300.0*math.sin(x/30.0*math.pi)) * 2.0 / 3.0
+        return ret
+
+    dlat = _transform_lat(lng - 105.0, lat - 35.0)
+    dlng = _transform_lng(lng - 105.0, lat - 35.0)
+
+    radlat = lat / 180.0 * math.pi
+    magic = math.sin(radlat)
+    magic = 1.0 - ee * magic * magic
+    sqrtmagic = math.sqrt(magic)
+
+    dlat = (dlat * 180.0) / ((a * (1.0 - ee)) / (magic * sqrtmagic) * math.pi)
+    dlng = (dlng * 180.0) / (a / sqrtmagic * math.cos(radlat) * math.pi)
+
+    # GCJ-02 = WGS-84 + offset  →  WGS-84 = GCJ-02 - offset
+    wgs_lat = lat - dlat
+    wgs_lng = lng - dlng
+    return wgs_lng, wgs_lat
+
+
 def _convert_gps_to_decimal(gps_value) -> Optional[float]:
     """
     将 EXIF GPS 坐标（度/分/秒）转为十进制度数
@@ -197,6 +262,18 @@ def extract_photo_metadata(file_path: str) -> MediaFileData:
                         lat = -lat
                     if str(lon_ref).upper() == "W":
                         lon = -lon
+
+                    # ── 坐标系检测与转换 ──────────────────────────────
+                    # 读取 GPSMapDatum（EXIF tag 0x0012）
+                    # 标准设备写入 WGS-84，部分国产老机型/第三方 App 写入 GCJ-02
+                    map_datum = str(gps_info.get("GPSMapDatum", "WGS-84")).strip().upper()
+                    if "GCJ" in map_datum:
+                        # 检测到 GCJ-02 → 做逆转换到 WGS-84
+                        lon, lat = _gcj02_to_wgs84(lon, lat)
+                        logger.debug(
+                            f"GPS 坐标系 GCJ-02 已转换为 WGS-84: "
+                            f"({result.file_name}: lat={lat:.6f}, lon={lon:.6f})"
+                        )
 
                     result.latitude = round(lat, 7)
                     result.longitude = round(lon, 7)
