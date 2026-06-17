@@ -73,7 +73,7 @@ function Sidebar() {
             {backendReady ? "后端已连接" : "后端未连接"}
           </span>
         </div>
-        <div className="text-xs text-slate-600 mt-1">v0.1.0 · Phase 3</div>
+        <div className="text-xs text-slate-600 mt-1">v0.8.0 · Phase 4</div>
       </div>
     </aside>
   );

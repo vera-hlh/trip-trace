@@ -157,7 +157,6 @@ export default function HomePage() {
             desc="读取照片元数据、GPS 信息，识别行程"
             onClick={() => setCurrentPage("scan")}
             disabled={!hasConfig || !backendReady}
-            badge="Week 7"
           />
           <QuickCard
             icon="📦"
@@ -165,7 +164,6 @@ export default function HomePage() {
             desc="查看行程切分结果，确认后执行归档"
             onClick={() => setCurrentPage("archive")}
             disabled={!hasConfig || !backendReady}
-            badge="Week 8"
           />
           <QuickCard
             icon="🗺️"
@@ -173,7 +171,6 @@ export default function HomePage() {
             desc="在地图上可视化旅行轨迹与热点"
             onClick={() => setCurrentPage("map")}
             disabled={!backendReady}
-            badge="Week 9"
           />
         </div>
       </div>
