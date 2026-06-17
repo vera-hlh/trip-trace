@@ -49,6 +49,18 @@ interface PreviewSummary {
   files_without_gps: number;
 }
 
+// POI 审核分组
+interface PoiGroup {
+  province: string;
+  city: string;
+  poi: string;        // 当前 POI（空=仅城市级别）
+  file_count: number;
+  // 本地编辑状态
+  draft?: string;     // 编辑草稿
+  editing?: boolean;
+  saving?: boolean;
+}
+
 type FlowStep =
   | "idle"
   | "scanning"
@@ -336,6 +348,10 @@ export default function ScanPage() {
     errors: number;
   } | null>(null);
 
+  // POI 审核分组状态
+  const [poiGroups, setPoiGroups] = useState<PoiGroup[]>([]);
+  const [poiGroupsLoading, setPoiGroupsLoading] = useState(false);
+
   // 预览摘要
   const [previewSummary, setPreviewSummary] = useState<PreviewSummary | null>(null);
 
@@ -435,6 +451,8 @@ export default function ScanPage() {
         setGeocodeResult({ updated: data.updated, errors: data.errors || 0 });
         addLog(`地理编码完成：更新 ${data.updated} 个文件`);
         setStep("geocode-done");
+        // 地理编码完成后自动加载 POI 分组供审核
+        await handleLoadPoiGroups();
       } else {
         addLog(`地理编码失败: ${JSON.stringify(data)}`);
         setStep("scan-done");
@@ -442,6 +460,80 @@ export default function ScanPage() {
     } catch (e) {
       addLog(`地理编码请求失败: ${e}`);
       setStep("scan-done");
+    }
+  };
+
+  // ── POI 审核：加载分组 ─────────────────────────────────────
+
+  const handleLoadPoiGroups = async () => {
+    setPoiGroupsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (sourceFolderPath) params.set("folder_path", sourceFolderPath);
+      const res = await fetch(`${API}/api/scan/geocoded?${params}`);
+      const json = await res.json();
+      if (json.success) {
+        setPoiGroups(json.data.groups.map((g: PoiGroup) => ({
+          ...g,
+          draft: g.poi,
+          editing: false,
+          saving: false,
+        })));
+      }
+    } catch (e) {
+      console.error("加载 POI 分组失败:", e);
+    } finally {
+      setPoiGroupsLoading(false);
+    }
+  };
+
+  // ── POI 审核：保存单组修改 ─────────────────────────────────
+
+  const handleSavePoiGroup = async (idx: number) => {
+    const group = poiGroups[idx];
+    if (!group || group.draft === group.poi) {
+      setPoiGroups((prev) =>
+        prev.map((g, i) => (i === idx ? { ...g, editing: false } : g))
+      );
+      return;
+    }
+
+    setPoiGroups((prev) =>
+      prev.map((g, i) => (i === idx ? { ...g, saving: true } : g))
+    );
+
+    try {
+      const res = await fetch(`${API}/api/scan/poi-group`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          province: group.province,
+          city: group.city,
+          old_poi: group.poi,
+          new_poi: group.draft ?? "",
+        }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        addLog(`POI 更新：${group.city} / ${group.poi || "（无）"} → ${group.draft || "（无）"}`);
+        setPoiGroups((prev) =>
+          prev.map((g, i) =>
+            i === idx
+              ? { ...g, poi: g.draft ?? "", editing: false, saving: false }
+              : g
+          )
+        );
+      } else {
+        addLog(`POI 更新失败: ${json.error}`);
+        setPoiGroups((prev) =>
+          prev.map((g, i) => (i === idx ? { ...g, saving: false } : g))
+        );
+      }
+    } catch (e) {
+      addLog(`POI 更新请求失败: ${e}`);
+      setPoiGroups((prev) =>
+        prev.map((g, i) => (i === idx ? { ...g, saving: false } : g))
+      );
     }
   };
 
@@ -575,6 +667,7 @@ export default function ScanPage() {
     setScanEvents([]);
     setScanStats(null);
     setGeocodeResult(null);
+    setPoiGroups([]);
     setPreviewSummary(null);
     setTripStructure(null);
     setLogs([]);
@@ -849,6 +942,133 @@ export default function ScanPage() {
               将 GPS 坐标转换为城市/省份名称，用于行程命名和归档文件夹
             </p>
           )}
+        </div>
+      )}
+
+      {/* ── POI 审核（地理编码完成后显示，可选步骤）────────── */}
+      {["geocode-done", "previewing", "done"].includes(step) && poiGroups.length > 0 && (
+        <div className="bg-slate-900/60 border border-slate-700/50 rounded-xl p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-300">
+                📍 POI 审核（可选）
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                高德识别到的景点地名，可手动修改后用于归档备注和文件夹命名
+              </p>
+            </div>
+            <button
+              onClick={handleLoadPoiGroups}
+              disabled={poiGroupsLoading}
+              className="text-xs text-slate-500 hover:text-slate-300 border border-slate-700 px-2 py-1 rounded transition-colors"
+            >
+              {poiGroupsLoading ? "加载中..." : "🔄 刷新"}
+            </button>
+          </div>
+
+          {/* 分组列表 */}
+          <div className="space-y-1 max-h-64 overflow-y-auto">
+            {poiGroups.map((group, idx) => (
+              <div
+                key={idx}
+                className="flex items-center gap-3 px-3 py-2 bg-slate-800/50 rounded-lg text-sm"
+              >
+                {/* 城市 */}
+                <span className="text-slate-300 font-medium min-w-[5rem] flex-shrink-0">
+                  {group.city}
+                </span>
+
+                {/* POI 编辑区 */}
+                <div className="flex-1 min-w-0">
+                  {group.editing ? (
+                    <input
+                      type="text"
+                      value={group.draft ?? ""}
+                      onChange={(e) =>
+                        setPoiGroups((prev) =>
+                          prev.map((g, i) =>
+                            i === idx ? { ...g, draft: e.target.value } : g
+                          )
+                        )
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleSavePoiGroup(idx);
+                        if (e.key === "Escape")
+                          setPoiGroups((prev) =>
+                            prev.map((g, i) =>
+                              i === idx
+                                ? { ...g, editing: false, draft: g.poi }
+                                : g
+                            )
+                          );
+                      }}
+                      placeholder="输入 POI 名称（留空=仅显示城市）"
+                      autoFocus
+                      className="w-full bg-slate-700 border border-blue-500 rounded px-2 py-0.5 text-sm text-white outline-none"
+                    />
+                  ) : (
+                    <span
+                      onClick={() =>
+                        setPoiGroups((prev) =>
+                          prev.map((g, i) =>
+                            i === idx ? { ...g, editing: true, draft: g.poi } : g
+                          )
+                        )
+                      }
+                      className="cursor-pointer hover:text-blue-300 transition-colors"
+                    >
+                      {group.poi ? (
+                        <span className="text-emerald-300">{group.poi}</span>
+                      ) : (
+                        <span className="text-slate-500 italic">
+                          （无 POI，仅显示城市）
+                        </span>
+                      )}
+                      <span className="text-slate-600 hover:text-slate-400 text-xs ml-1.5">
+                        ✏️
+                      </span>
+                    </span>
+                  )}
+                </div>
+
+                {/* 文件数 */}
+                <span className="text-xs text-slate-500 flex-shrink-0">
+                  {group.file_count} 张
+                </span>
+
+                {/* 操作按钮 */}
+                {group.editing && (
+                  <div className="flex gap-1 flex-shrink-0">
+                    <button
+                      onClick={() => handleSavePoiGroup(idx)}
+                      disabled={group.saving}
+                      className="px-2 py-0.5 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
+                    >
+                      {group.saving ? "..." : "保存"}
+                    </button>
+                    <button
+                      onClick={() =>
+                        setPoiGroups((prev) =>
+                          prev.map((g, i) =>
+                            i === idx
+                              ? { ...g, editing: false, draft: g.poi }
+                              : g
+                          )
+                        )
+                      }
+                      className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded transition-colors"
+                    >
+                      取消
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <p className="text-xs text-slate-600">
+            修改 POI 后会立即保存到数据库，归档备注格式：省份/城市/POI
+          </p>
         </div>
       )}
 

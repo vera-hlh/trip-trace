@@ -42,8 +42,11 @@ class GeoLocation:
         return self.country_code.upper() in ("CN", "CHN", "CHINA")
 
     def to_remark_path(self) -> str:
-        """生成备注路径字符串"""
-        parts = [p for p in [self.country, self.province, self.city, self.poi or self.district] if p]
+        """
+        生成备注路径字符串
+        层级：国家 → 省份 → 城市 → POI（跳过区县，无旅行POI则停在城市）
+        """
+        parts = [p for p in [self.country, self.province, self.city, self.poi] if p]
         return "/".join(parts)
 
 
@@ -189,15 +192,84 @@ def translate_cn_location(city: str, province: str) -> tuple[str, str]:
 # 第三层（可选）：高德地图 API（在线增强，获取 POI 景点名）
 # ============================================================
 
+# ── 旅行相关 POI 类型代码（用于 poitype 参数过滤） ─────────────
+# 文档来源：高德 POI 分类编码 V1.06（2023-02）
+_TRAVEL_POI_TYPES = "|".join([
+    "110000",  # 风景名胜（含公园、国家景点、世遗、寺庙、海滩等全部子类）
+    "190700",  # 热点地名
+    "190600",  # 标志性建筑物
+    "190200",  # 自然地名（山、湖、峡谷、冰川、岛屿…）
+    "140100",  # 博物馆
+    "140200",  # 展览馆
+    "140400",  # 美术馆
+    "080400",  # 度假疗养场所
+    "080500",  # 休闲场所（游乐场、露营地）
+    "061000",  # 特色商业街（步行街）
+    "190108",  # 村庄级地名（网红村庄：乌镇、西塘、西江苗寨等）
+])
+
+# ── POI 优先级（前缀匹配，从高到低）────────────────────────────
+_POI_PRIORITY_PREFIXES = [
+    "1102",    # 风景名胜（国家/省级景点、世界遗产、寺庙道观、海滩…）
+    "1907",    # 热点地名
+    "1906",    # 标志性建筑物
+    "1902",    # 自然地名（山/湖/峡谷/冰川…）
+    "1101",    # 公园广场
+    "1401",    # 博物馆
+    "1402",    # 展览馆
+    "1404",    # 美术馆
+    "0804",    # 度假疗养场所
+    "0610",    # 特色商业街
+    "0805",    # 休闲场所
+]
+# 村庄级地名：优先级最低，精确匹配类型码
+_VILLAGE_TYPECODE = "190108"
+
+
+def _select_best_travel_poi(pois: list) -> str:
+    """
+    从高德返回的 pois 列表中，按优先级选出最佳旅行相关 POI 名称。
+
+    优先级：风景名胜 > 热点地名 > 标志性建筑 > 自然地名 >
+           博物馆/展览馆 > 度假地 > 商业街 > 休闲场所 > 村庄
+
+    若无旅行相关 POI，返回空字符串（调用方显示到城市级别即可）。
+    """
+    if not pois:
+        return ""
+
+    # 按优先级前缀匹配
+    for prefix in _POI_PRIORITY_PREFIXES:
+        for poi in pois:
+            typecode = str(poi.get("typecode", ""))
+            if typecode.startswith(prefix):
+                name = poi.get("name", "").strip()
+                if name:
+                    return name
+
+    # 最低优先级：村庄级地名（精确匹配）
+    for poi in pois:
+        if str(poi.get("typecode", "")) == _VILLAGE_TYPECODE:
+            name = poi.get("name", "").strip()
+            if name:
+                return name
+
+    return ""  # 无旅行相关 POI
+
+
 async def reverse_geocode_gaode(
     lat: float,
     lon: float,
     api_key: str,
 ) -> Optional[GeoLocation]:
     """
-    高德地图逆地理编码（在线，获取精确中文地址和景点名）
+    高德地图逆地理编码（在线，获取精确中文地址和旅行相关 POI 景点名）
 
-    仅用于第三层（POI 聚类触发新查询时）
+    改进：
+      - coordsys=gps：正确处理 WGS-84 坐标（避免偏移）
+      - poitype 过滤：只返回旅行相关 POI（风景名胜/自然地名/热点/村庄等）
+      - 优先级选择：按景点重要性排序，取最相关的 POI
+      - 层级精简：国家→省份→城市→POI（跳过区县）
 
     Args:
         lat: 纬度
@@ -205,20 +277,20 @@ async def reverse_geocode_gaode(
         api_key: 高德 API Key
 
     Returns:
-        GeoLocation 对象（含中文省市区和 POI 名），失败返回 None
+        GeoLocation 对象（含中文省市和 POI 名），失败返回 None
     """
     if not api_key:
         return None
 
     try:
         import httpx
-        # 高德 API 坐标格式：经度,纬度
-        # coordsys=gps 告知高德输入为 WGS-84（照片 EXIF 标准坐标系）
-        # 不加此参数默认按 GCJ-02（火星坐标）处理，会导致中国境内偏移数百米
+        # coordsys=gps：输入为 WGS-84，高德内部自动转换到 GCJ-02
+        # poitype：只请求旅行相关 POI 类型（风景名胜/自然地名/热点地名/村庄等）
         url = (
             f"https://restapi.amap.com/v3/geocode/regeo"
             f"?output=json&location={lon},{lat}&key={api_key}"
             f"&radius=1000&extensions=all&coordsys=gps"
+            f"&poitype={_TRAVEL_POI_TYPES}"
         )
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(url)
@@ -235,13 +307,13 @@ async def reverse_geocode_gaode(
         city = address_comp.get("city", "")
         district = address_comp.get("district", "")
 
-        # 直辖市（如北京、上海）city 字段为空数组，用 province 代替
+        # 直辖市（北京/上海/天津/重庆）city 字段为空数组，用 province 代替
         if not city or city == []:
             city = province
 
-        # 获取最近景点 POI
+        # 按优先级选择最佳旅行相关 POI（若无则为空字符串）
         pois = regeocode.get("pois", [])
-        poi_name = pois[0].get("name", "") if pois else ""
+        poi_name = _select_best_travel_poi(pois)
 
         return GeoLocation(
             country="中国",
@@ -249,7 +321,7 @@ async def reverse_geocode_gaode(
             province=province if isinstance(province, str) else "",
             city=city if isinstance(city, str) else "",
             district=district if isinstance(district, str) else "",
-            poi=poi_name,
+            poi=poi_name,  # 空字符串表示无旅行相关 POI，显示到城市级别
             source="gaode",
         )
 

@@ -250,6 +250,125 @@ async def get_scan_status(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/scan/geocoded")
+async def get_geocoded_groups(
+    folder_path: str | None = Query(None, description="可选：限定文件夹范围"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取已地理编码的文件，按城市+POI 分组汇总，用于 POI 审核界面。
+
+    返回格式：
+    [
+      { "city": "哈尔滨市", "province": "黑龙江省",
+        "poi": "中央大街", "file_count": 15 },
+      { "city": "哈尔滨市", "province": "黑龙江省",
+        "poi": "", "file_count": 3 },     ← 无 POI（仅城市）
+      ...
+    ]
+    """
+    conditions = [MediaFile.city.is_not(None)]
+
+    if folder_path and folder_path.strip():
+        norm = os.path.normpath(folder_path.strip())
+        from sqlalchemy import or_
+        conditions.append(
+            or_(
+                MediaFile.original_path.like(f"{norm}%"),
+                MediaFile.original_path.like(f"{norm.replace(chr(92), '/')}%"),
+            )
+        )
+
+    result = await db.execute(
+        select(MediaFile).where(*conditions).order_by(MediaFile.datetime_original)
+    )
+    files = result.scalars().all()
+
+    # 按 (province, city, poi) 分组计数
+    groups: dict[tuple, dict] = {}
+    for f in files:
+        key = (f.province or "", f.city or "", f.poi or "")
+        if key not in groups:
+            groups[key] = {
+                "province": f.province or "",
+                "city": f.city or "",
+                "poi": f.poi or "",
+                "file_count": 0,
+            }
+        groups[key]["file_count"] += 1
+
+    # 按省份 → 城市 → POI 排序
+    sorted_groups = sorted(
+        groups.values(),
+        key=lambda g: (g["province"], g["city"], g["poi"])
+    )
+
+    return {
+        "success": True,
+        "data": {
+            "groups": sorted_groups,
+            "total_files": len(files),
+            "total_groups": len(sorted_groups),
+        },
+    }
+
+
+class PoiGroupUpdateRequest(BaseModel):
+    """更新一组文件的 POI 名称"""
+    province: str
+    city: str
+    old_poi: str        # 空字符串表示"无POI"
+    new_poi: str        # 更新后的 POI 名称（空字符串=清空）
+
+
+@router.put("/scan/poi-group")
+async def update_poi_group(
+    body: PoiGroupUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    批量更新指定 城市+POI 分组下所有文件的 POI 名称。
+
+    用途：POI 审核时，用户对某地点整组重命名（如"中央大街" → "哈尔滨中央大街"）
+    """
+    from sqlalchemy import and_, or_
+
+    # 构建查询条件
+    city_condition = MediaFile.city == body.city
+    province_condition = MediaFile.province == body.province
+
+    # old_poi 为空字符串时，匹配 poi IS NULL 或 poi = ''
+    if body.old_poi == "":
+        poi_condition = or_(MediaFile.poi.is_(None), MediaFile.poi == "")
+    else:
+        poi_condition = MediaFile.poi == body.old_poi
+
+    result = await db.execute(
+        select(MediaFile).where(
+            and_(province_condition, city_condition, poi_condition)
+        )
+    )
+    files = result.scalars().all()
+
+    if not files:
+        return {"success": False, "error": "未找到匹配的文件"}
+
+    # 批量更新
+    updated = 0
+    new_poi_value = body.new_poi.strip() or None  # 空字符串转 None
+    for f in files:
+        f.poi = new_poi_value
+        updated += 1
+
+    await db.commit()
+
+    return {
+        "success": True,
+        "updated": updated,
+        "message": f"已将 {updated} 个文件的 POI 更新为「{body.new_poi or '（无）'}」",
+    }
+
+
 @router.delete("/scan/clear")
 async def clear_scan_data(db: AsyncSession = Depends(get_db)):
     """清空扫描数据（开发调试用）"""
