@@ -323,6 +323,103 @@ def _make_unclassified_trip(items: list[MediaItem]) -> list[BigTrip]:
 
 
 # ============================================================
+# 无 GPS 文件时间就近位置推断
+# ============================================================
+
+def infer_location_for_gps_less(
+    items: list[MediaItem],
+    time_window_hours: float = 2.0,
+) -> list[MediaItem]:
+    """
+    为「有时间戳但无 GPS」的文件，根据时间窗口内前后相邻的有 GPS 文件推断位置。
+
+    推断规则（按优先级）：
+      1. 前后都在窗口内且位置相同 → 推断该位置（最可信）
+      2. 仅前方有 GPS 文件         → 采用前方位置
+      3. 仅后方有 GPS 文件         → 采用后方位置
+      4. 前后位置不同（路途中）    → 不推断，保持无位置
+      5. 超出时间窗口              → 不推断
+
+    Args:
+        items: MediaItem 列表（来自数据库）
+        time_window_hours: 推断时间窗口（小时），与小行程阈值对齐
+
+    Returns:
+        新列表，其中 GPS-less 文件的 location_key/city 已被推断填充（has_gps 仍为 False）
+    """
+    from datetime import timedelta
+    from dataclasses import replace as dc_replace
+
+    # 只有含时间戳且有 GPS 且有位置信息的文件才能作为参考
+    gps_ref = sorted(
+        [it for it in items if it.has_gps and it.datetime_original and it.location_key],
+        key=lambda x: x.datetime_original,
+    )
+
+    if not gps_ref:
+        return items  # 没有参考文件，无法推断
+
+    window = timedelta(hours=time_window_hours)
+    result: list[MediaItem] = []
+
+    for item in items:
+        # 只处理：有时间戳 + 无GPS
+        if item.has_gps or not item.datetime_original:
+            result.append(item)
+            continue
+
+        dt = item.datetime_original
+
+        # 找前方（dt 之前）最近的 GPS 文件（在时间窗口内）
+        prev_ref: Optional[MediaItem] = None
+        for ref in reversed(gps_ref):
+            if ref.datetime_original <= dt:
+                if dt - ref.datetime_original <= window:
+                    prev_ref = ref
+                break
+
+        # 找后方（dt 之后）最近的 GPS 文件（在时间窗口内）
+        next_ref: Optional[MediaItem] = None
+        for ref in gps_ref:
+            if ref.datetime_original >= dt:
+                if ref.datetime_original - dt <= window:
+                    next_ref = ref
+                break
+
+        # 推断逻辑
+        inferred_loc_key = ""
+        inferred_city = ""
+
+        if prev_ref and next_ref:
+            if prev_ref.location_key == next_ref.location_key:
+                # 前后位置相同 → 推断（最可信）
+                inferred_loc_key = prev_ref.location_key
+                inferred_city = prev_ref.city
+            # else: 前后不同（路途中），不推断
+        elif prev_ref:
+            inferred_loc_key = prev_ref.location_key
+            inferred_city = prev_ref.city
+        elif next_ref:
+            inferred_loc_key = next_ref.location_key
+            inferred_city = next_ref.city
+
+        if inferred_loc_key:
+            # 用推断位置创建新的 MediaItem（has_gps 仍为 False，标记原本无GPS）
+            result.append(dc_replace(
+                item,
+                location_key=inferred_loc_key,
+                city=inferred_city,
+            ))
+            logger.debug(
+                f"GPS推断：{item.file_name} → {inferred_city or inferred_loc_key}"
+            )
+        else:
+            result.append(item)  # 无法推断，保持原样
+
+    return result
+
+
+# ============================================================
 # 归档预览（生成文件移动计划）
 # ============================================================
 

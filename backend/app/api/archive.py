@@ -30,6 +30,7 @@ from app.services.archive_service import (
     BigTrip,
     segment_into_trips,
     generate_archive_preview,
+    infer_location_for_gps_less,
 )
 
 logger = logging.getLogger(__name__)
@@ -275,6 +276,10 @@ async def archive_preview(
         )
 
         media_items = _build_media_items(db_files)
+        # 无 GPS 文件就近位置推断（根据前后相邻GPS文件的位置推断归档位置）
+        media_items = infer_location_for_gps_less(
+            media_items, opts.small_trip_threshold_hours
+        )
         big_trips = segment_into_trips(media_items, config)
         preview_items = generate_archive_preview(big_trips, request.output_path)
 
@@ -371,6 +376,10 @@ async def archive_execute(
                 small_trip_threshold_hours=opts.small_trip_threshold_hours,
             )
             media_items = _build_media_items(db_files)
+            # 无 GPS 文件就近位置推断（根据前后相邻GPS文件的位置推断归档位置）
+            media_items = infer_location_for_gps_less(
+                media_items, opts.small_trip_threshold_hours
+            )
             big_trips = segment_into_trips(media_items, config)
             preview_items = generate_archive_preview(big_trips, request.output_path)
 
