@@ -145,8 +145,13 @@ frontend/electron/
 - ✅ 缩略图懒加载（`/api/media/thumbnail`）
 - ✅ 点击照片 → Electron IPC 用系统程序打开
 
-### 后续待接入（已记录）
-- [ ] **Week 3 POI 地名**：目前逆地理编码仅到城市级别，具体 POI 地名需申请第三方 API（高德/百度/腾讯地图 API），建议安排在 Week 8 归档功能完成后、Week 9 地图展示前进行接入和调试
+### ✅ POI 精确地名 - 完成（高德地图 API）
+- ✅ 高德 Web服务 API Key 已配置（`backend/.env`，不提交 git）
+- ✅ `backend/.env` 格式：`TRIPRACE_GAODE_API_KEY=<key>`
+- ✅ `/api/scan/geocode` 三层策略：离线省市 → POI 聚类复用 → 高德在线 POI
+- ✅ 中国照片：高德返回直接中文（哈尔滨市、南岗区、利群小区等）
+- ✅ 海外照片：保留英文原名
+- ✅ POI 聚类：同地点 500m 内、时间差 ≤2h 的照片复用同一 POI，减少 API 调用
 
 ---
 
