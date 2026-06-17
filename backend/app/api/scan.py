@@ -263,54 +263,116 @@ async def clear_scan_data(db: AsyncSession = Depends(get_db)):
 async def geocode_scanned_files(db: AsyncSession = Depends(get_db)):
     """
     对已扫描的有 GPS 但无城市信息的文件批量做逆地理编码
+
+    三层策略：
+      1. 离线 reverse_geocoder（省市，全球覆盖）
+      2. POI 聚类复用（同行程同地点不重复调用 API）
+      3. 高德地图 API（若已配置 Key，则获取精确中文地名 + POI 景点名）
+
     返回更新数量统计
     """
-    from app.services.geocode_service import reverse_geocode_offline
+    from app.core.config import settings
+    from app.services.geocode_service import (
+        get_location,
+        translate_cn_location,
+        PoiClusterState,
+    )
+    from datetime import datetime as _dt
 
-    # 查找有 GPS 但 city 为空的文件
+    gaode_key = settings.gaode_api_key  # 读取 .env 中的 Key
+
+    # 查找有 GPS 但 city 为空的文件（按时间排序，配合 POI 聚类）
     result = await db.execute(
-        select(MediaFile).where(
-            MediaFile.has_gps == True,
-            MediaFile.city.is_(None)
-        ).limit(500)  # 每次最多处理 500 个
+        select(MediaFile)
+        .where(
+            MediaFile.has_gps == True,  # noqa
+            MediaFile.city.is_(None),
+        )
+        .order_by(MediaFile.datetime_original)
+        .limit(500)  # 每次最多处理 500 个
     )
     files = result.scalars().all()
 
     if not files:
         return {"success": True, "updated": 0, "message": "无需要地理编码的文件"}
 
-    from app.services.geocode_service import translate_cn_location
-
     updated = 0
     errors = 0
+    api_calls = 0
+
+    # POI 聚类状态（跨文件复用，减少高德 API 调用次数）
+    poi_clusters: list[PoiClusterState] = []
+
     for f in files:
         if not f.latitude or not f.longitude:
             continue
         try:
-            loc = reverse_geocode_offline(f.latitude, f.longitude)
+            # 解析拍摄时间（用于 POI 聚类时间判断）
+            dt = None
+            if f.datetime_original:
+                try:
+                    dt = _dt.fromisoformat(f.datetime_original)
+                    if dt.tzinfo:
+                        dt = dt.replace(tzinfo=None)
+                except (ValueError, AttributeError):
+                    pass
+
+            # 调用三层统一接口
+            loc, api_called = await get_location(
+                lat=f.latitude,
+                lon=f.longitude,
+                dt=dt,
+                gaode_api_key=gaode_key,
+                poi_clusters=poi_clusters,
+                time_threshold_hours=settings.small_trip_threshold_hours,
+            )
+
+            if api_called:
+                api_calls += 1
+
             if loc:
-                # 对中国地名做中英文翻译
-                if loc.country_code == "CN":
-                    cn_city, cn_province = translate_cn_location(loc.city, loc.province)
-                    # 格式：若有中文翻译则用"中文 (English)"，否则保留原英文
-                    f.city = f"{cn_city} ({loc.city})" if cn_city != loc.city else loc.city
-                    f.province = f"{cn_province} ({loc.province})" if cn_province != loc.province else loc.province
-                else:
+                if loc.source == "gaode":
+                    # 高德返回直接中文，无需翻译
                     f.city = loc.city
                     f.province = loc.province
-                f.country = loc.country
-                f.district = loc.district
+                    f.district = loc.district
+                    f.country = loc.country or "中国"
+                elif loc.country_code == "CN":
+                    # 离线结果（英文）→ 翻译为中文双语格式
+                    cn_city, cn_province = translate_cn_location(loc.city, loc.province)
+                    f.city = f"{cn_city} ({loc.city})" if cn_city != loc.city else loc.city
+                    f.province = (
+                        f"{cn_province} ({loc.province})"
+                        if cn_province != loc.province
+                        else loc.province
+                    )
+                    f.district = loc.district
+                    f.country = loc.country
+                else:
+                    # 国外地点，保留英文
+                    f.city = loc.city
+                    f.province = loc.province
+                    f.district = loc.district
+                    f.country = loc.country
+
+                # 写入 POI（景点名，高德 API 提供）
+                if loc.poi:
+                    f.poi = loc.poi
+
                 updated += 1
+
         except Exception as e:
             errors += 1
             logger.warning(f"地理编码失败 {f.file_name}: {e}")
 
     await db.commit()
 
+    gaode_note = f"（高德 API 调用 {api_calls} 次）" if gaode_key else "（未配置高德 Key，仅离线模式）"
     return {
         "success": True,
         "updated": updated,
         "errors": errors,
+        "api_calls": api_calls,
         "total_processed": len(files),
-        "message": f"已为 {updated} 个文件更新地理位置信息"
+        "message": f"已为 {updated} 个文件更新地理位置信息 {gaode_note}",
     }
