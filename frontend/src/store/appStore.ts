@@ -11,6 +11,7 @@ export type AppPage =
   | "scan"
   | "archive"
   | "map"
+  | "history"
   | "test";
 
 export interface AppSettings {

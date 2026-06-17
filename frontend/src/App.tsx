@@ -11,6 +11,7 @@ import FolderSetup from "@/pages/FolderSetup";
 import ScanPage from "@/pages/ScanPage";
 import ArchivePage from "@/pages/ArchivePage";
 import MapPage from "@/pages/MapPage";
+import HistoryPage from "@/pages/HistoryPage";
 import TestConsole from "@/pages/TestConsole";
 
 function PageRouter() {
@@ -22,6 +23,7 @@ function PageRouter() {
     case "scan":         return <ScanPage />;
     case "archive":      return <ArchivePage />;
     case "map":          return <MapPage />;
+    case "history":      return <HistoryPage />;
     case "test":         return <TestConsole />;
     default:             return <HomePage />;
   }

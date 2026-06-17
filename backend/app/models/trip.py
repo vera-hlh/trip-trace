@@ -7,6 +7,7 @@ class Trip(Base):
     __tablename__ = "trips"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String, default="local", nullable=False, index=True)  # Phase 4: 多用户预留
     trip_name = Column(String, nullable=False)           # 例：01_昆明_0910-0913
     display_name = Column(String)                        # 用户自定义名称
     start_date = Column(String, nullable=False)          # ISO8601 日期

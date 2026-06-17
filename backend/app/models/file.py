@@ -7,6 +7,7 @@ class MediaFile(Base):
     __tablename__ = "files"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String, default="local", nullable=False, index=True)  # Phase 4: 多用户预留
     original_path = Column(String, unique=True, nullable=False)
     current_path = Column(String)
     file_name = Column(String, nullable=False)

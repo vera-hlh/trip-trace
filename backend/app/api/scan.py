@@ -17,7 +17,7 @@ import os
 from datetime import datetime
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func
@@ -400,12 +400,13 @@ async def geocode_scanned_files(db: AsyncSession = Depends(get_db)):
 
     gaode_key = settings.gaode_api_key  # 读取 .env 中的 Key
 
-    # 查找有 GPS 但 city 为空的文件（按时间排序，配合 POI 聚类）
+    # 查找有 GPS 但 POI 为空的文件（按时间排序，配合 POI 聚类）
+    # 逻辑：已有 POI → 跳过；无 POI（无论是否有 city）→ 进行地理编码
     result = await db.execute(
         select(MediaFile)
         .where(
             MediaFile.has_gps == True,  # noqa
-            MediaFile.city.is_(None),
+            MediaFile.poi.is_(None),    # 跳过已有 POI 的文件
         )
         .order_by(MediaFile.datetime_original)
         .limit(500)  # 每次最多处理 500 个
