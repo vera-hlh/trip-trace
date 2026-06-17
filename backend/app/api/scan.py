@@ -400,16 +400,24 @@ async def geocode_scanned_files(db: AsyncSession = Depends(get_db)):
 
     gaode_key = settings.gaode_api_key  # 读取 .env 中的 Key
 
-    # 查找有 GPS 但 POI 为空的文件（按时间排序，配合 POI 聚类）
-    # 逻辑：已有 POI → 跳过；无 POI（无论是否有 city）→ 进行地理编码
+    # 查找有 GPS 但尚未地理编码（无 city）的文件，按时间排序
+    #
+    # 跳过逻辑（city IS NOT NULL → 跳过）：
+    #   - 已有 city + POI → 完整处理过，跳过
+    #   - 已有 city，无 POI → 也跳过（附近无旅行相关POI是正常结果，不再重复调用API）
+    #
+    # 典型使用场景：
+    #   1. 重复运行：重新扫描同一文件夹时，已处理文件直接跳过
+    #   2. 额度中断恢复：API额度耗尽后补充额度，只对未处理文件继续
+    #   3. 新增文件补扫：文件夹中新增的照片（无city）自动被识别和处理
     result = await db.execute(
         select(MediaFile)
         .where(
-            MediaFile.has_gps == True,  # noqa
-            MediaFile.poi.is_(None),    # 跳过已有 POI 的文件
+            MediaFile.has_gps == True,    # noqa
+            MediaFile.city.is_(None),     # 跳过已有city的文件（已处理过）
         )
         .order_by(MediaFile.datetime_original)
-        .limit(500)  # 每次最多处理 500 个
+        .limit(500)
     )
     files = result.scalars().all()
 
