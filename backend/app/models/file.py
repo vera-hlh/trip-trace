@@ -19,7 +19,8 @@ class MediaFile(Base):
     province = Column(String)
     city = Column(String)
     district = Column(String)
-    poi = Column(String)
+    township = Column(String)                           # 乡镇（北极镇）← 精确行政区划
+    poi = Column(String)                                # 景点/地标名
     remark_written = Column(Boolean, default=False)
     trip_id = Column(Integer, ForeignKey("trips.id"))
     has_gps = Column(Boolean, default=False)

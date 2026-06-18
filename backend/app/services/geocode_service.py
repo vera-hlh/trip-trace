@@ -33,21 +33,40 @@ class GeoLocation:
     country_code: str = ""  # "CN", "JP" 等
     province: str = ""      # 省/州
     city: str = ""          # 市
-    district: str = ""      # 区县
-    poi: str = ""           # 景点名称（需在线 API）
+    district: str = ""      # 区/县（漠河市）
+    township: str = ""      # 乡镇（北极镇）← 新增：行政区划，无需半径搜索
+    poi: str = ""           # 景点/地标名称（需在线 API）
     source: str = "offline" # "offline" | "gaode"
 
     @property
     def is_china(self) -> bool:
         return self.country_code.upper() in ("CN", "CHN", "CHINA")
 
+    @property
+    def best_location_label(self) -> str:
+        """
+        返回最具体的位置标签（用于归档文件夹命名）
+        优先级：POI > 乡镇 > 区县 > 城市
+        """
+        return self.poi or self.township or self.district or self.city
+
     def to_remark_path(self) -> str:
         """
         生成备注路径字符串
-        层级：国家 → 省份 → 城市 → POI（跳过区县，无旅行POI则停在城市）
+        层级：省份 → 城市 → 区县/乡镇 → POI
         """
-        parts = [p for p in [self.country, self.province, self.city, self.poi] if p]
-        return "/".join(parts)
+        parts = []
+        if self.province:
+            parts.append(self.province)
+        if self.city and self.city != self.province:
+            parts.append(self.city)
+        if self.district and self.district != self.city:
+            parts.append(self.district)
+        if self.township:
+            parts.append(self.township)
+        if self.poi:
+            parts.append(self.poi)
+        return "/".join(parts) if parts else self.city
 
 
 # ============================================================
@@ -199,6 +218,8 @@ _TRAVEL_POI_TYPES = "|".join([
     "190700",  # 热点地名
     "190600",  # 标志性建筑物
     "190200",  # 自然地名（山、湖、峡谷、冰川、岛屿…）
+    "150200",  # 火车站（旅行重要节点，如漠河站）← 新增
+    "190106",  # 乡镇级地名（北极镇等）← 注：通过 addressComponent.township 更精确，这里作为 POI 补充
     "140100",  # 博物馆
     "140200",  # 展览馆
     "140400",  # 美术馆
@@ -215,6 +236,7 @@ _POI_PRIORITY_PREFIXES = [
     "1906",    # 标志性建筑物
     "1902",    # 自然地名（山/湖/峡谷/冰川…）
     "1101",    # 公园广场
+    "1502",    # 火车站（旅行重要节点，150200前缀）
     "1401",    # 博物馆
     "1402",    # 展览馆
     "1404",    # 美术馆
@@ -222,7 +244,7 @@ _POI_PRIORITY_PREFIXES = [
     "0610",    # 特色商业街
     "0805",    # 休闲场所
 ]
-# 村庄级地名：优先级最低，精确匹配类型码
+# 特定精确匹配类型码（最低优先级，不在前缀列表中）
 _VILLAGE_TYPECODE = "190108"
 
 
@@ -285,11 +307,12 @@ async def reverse_geocode_gaode(
     try:
         import httpx
         # coordsys=gps：输入为 WGS-84，高德内部自动转换到 GCJ-02
-        # poitype：只请求旅行相关 POI 类型（风景名胜/自然地名/热点地名/村庄等）
+        # radius=2000：平衡城市密集区与农村稀疏区（township 字段不依赖半径）
+        # poitype：只请求旅行相关 POI 类型
         url = (
             f"https://restapi.amap.com/v3/geocode/regeo"
             f"?output=json&location={lon},{lat}&key={api_key}"
-            f"&radius=1000&extensions=all&coordsys=gps"
+            f"&radius=2000&extensions=all&coordsys=gps"
             f"&poitype={_TRAVEL_POI_TYPES}"
         )
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -306,6 +329,10 @@ async def reverse_geocode_gaode(
         province = address_comp.get("province", "")
         city = address_comp.get("city", "")
         district = address_comp.get("district", "")
+        # ⭐ 关键：township 是精确的行政区划（如北极镇），不依赖半径搜索
+        # 城市密集区有 township，农村/山区也有 township，无论半径大小都能精确命中
+        township_raw = address_comp.get("township", "")
+        township = township_raw if isinstance(township_raw, str) else ""
 
         # 直辖市（北京/上海/天津/重庆）city 字段为空数组，用 province 代替
         if not city or city == []:
@@ -321,7 +348,8 @@ async def reverse_geocode_gaode(
             province=province if isinstance(province, str) else "",
             city=city if isinstance(city, str) else "",
             district=district if isinstance(district, str) else "",
-            poi=poi_name,  # 空字符串表示无旅行相关 POI，显示到城市级别
+            township=township,          # 乡镇级行政区（精确，无需搜索半径）
+            poi=poi_name,               # 景点/地标（依赖搜索，可能为空）
             source="gaode",
         )
 
@@ -452,6 +480,7 @@ async def get_location(
             location.province = online_loc.province or location.province
             location.city = online_loc.city or location.city
             location.district = online_loc.district or location.district
+            location.township = online_loc.township  # 乡镇级行政区（精确，来自高德 addressComponent）
             location.poi = online_loc.poi
             location.source = "gaode"
             api_called = True

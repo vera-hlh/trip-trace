@@ -464,6 +464,7 @@ async def geocode_scanned_files(db: AsyncSession = Depends(get_db)):
                     f.city = loc.city
                     f.province = loc.province
                     f.district = loc.district
+                    f.township = loc.township  # 乡镇级行政区（如北极镇）
                     f.country = loc.country or "中国"
                 elif loc.country_code == "CN":
                     # 离线结果（英文）→ 翻译为中文双语格式

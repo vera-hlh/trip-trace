@@ -141,6 +141,11 @@ def _build_media_items(db_files: list) -> list[MediaItem]:
             datetime_original=dt,
             location_key=location_key,
             city=f.city or "",
+            province=f.province or "",
+            district=f.district or "",
+            township=getattr(f, "township", "") or "",
+            poi=f.poi or "",
+            country=f.country or "",
             country_code=f.country or "CN",
             has_gps=f.has_gps,
         ))

@@ -46,8 +46,9 @@ async def _run_migrations() -> None:
     """
     migrations = [
         # (表名, 列名, 列定义)
-        ("files",  "user_id", "VARCHAR NOT NULL DEFAULT 'local'"),
-        ("trips",  "user_id", "VARCHAR NOT NULL DEFAULT 'local'"),
+        ("files",  "user_id",   "VARCHAR NOT NULL DEFAULT 'local'"),
+        ("trips",  "user_id",   "VARCHAR NOT NULL DEFAULT 'local'"),
+        ("files",  "township",  "VARCHAR"),   # v0.8.x - 乡镇行政区划
     ]
 
     async with AsyncSessionLocal() as session:

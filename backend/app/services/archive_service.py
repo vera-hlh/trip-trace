@@ -52,16 +52,29 @@ class MediaItem:
       - file_path: 文件完整路径
       - datetime_original: 拍摄时间（本地时间）
       - location_key: 地点标识（如 "CN/云南省/昆明市"），用于比较是否换地点
-      - city: 城市名（用于文件夹命名）
+      - city: 城市名
+      - district: 区/县名（漠河市）
+      - township: 乡镇名（北极镇）← 精确行政区划
+      - poi: 景点/地标名（冰雪大世界）← 最具体
       - has_gps: 是否有 GPS 信息
     """
     file_path: str
     file_name: str
     datetime_original: Optional[datetime]
     location_key: str = ""  # 用于行程切分比较
-    city: str = ""           # 用于文件夹命名
+    city: str = ""           # 城市名
+    province: str = ""       # 省份名（用于大行程命名）
+    district: str = ""       # 区县名
+    township: str = ""       # 乡镇名（如北极镇）
+    poi: str = ""            # 景点/地标名（如冰雪大世界）
+    country: str = ""        # 国家名（境外）
     country_code: str = ""
     has_gps: bool = False
+
+    @property
+    def best_location_label(self) -> str:
+        """最具体的位置标签：POI > 乡镇 > 区县 > 城市"""
+        return self.poi or self.township or self.district or self.city
 
 
 @dataclass
@@ -78,11 +91,14 @@ class SubTrip:
     def trip_name(self) -> str:
         """
         生成子行程文件夹名称
-        格式：序号_地点_MMDD-MMDD
-        例：01_昆明_0910-0913
+        格式：序号_地点_MMDD（单日）或 序号_地点_MMDD-MMDD（多日）
+        例：01_冰雪大世界_0204
+            05_延边朝鲜族自治州_0205-0206
         """
         start_str = self.start_date.strftime("%m%d")
         end_str = self.end_date.strftime("%m%d")
+        if start_str == end_str:
+            return f"{self.sequence_num:02d}_{self.location_label}_{start_str}"
         return f"{self.sequence_num:02d}_{self.location_label}_{start_str}-{end_str}"
 
     @property
@@ -143,8 +159,11 @@ def _location_key_to_label(location_key: str) -> str:
 
 
 def _get_location_city(item: MediaItem) -> str:
-    """从 MediaItem 获取城市名（优先用 city 字段）"""
-    return item.city or _location_key_to_label(item.location_key) or "未知"
+    """
+    从 MediaItem 获取最具体的位置标签（用于子行程命名）
+    优先级：POI > 乡镇 > 区县 > 城市 > location_key 提取
+    """
+    return item.best_location_label or _location_key_to_label(item.location_key) or "未知"
 
 
 def segment_into_trips(

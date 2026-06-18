@@ -226,7 +226,7 @@ export default function ArchivePage() {
   // 参数
   const [writeRemarks, setWriteRemarks] = useState(false);
   const [remarkTemplate, setRemarkTemplate] = useState(
-    "地点: {country}/{province}/{city}"
+    "地点: {province}/{city}/{township}/{poi}"
   );
   const [confirmed, setConfirmed] = useState(false);
 
