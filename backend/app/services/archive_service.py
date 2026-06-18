@@ -120,27 +120,167 @@ class BigTrip:
     def folder_name(self) -> str:
         """
         生成大行程文件夹名称
-        格式：YYYY-MM_行程名
-        例：2025-09_云南之旅
+        格式：{year}_{省市摘要}_{天数}天_{MMDD}-{MMDD}
+        例：2025_黑龙江大兴安岭·吉林延边_10天_0130-0208
+             2024_日本东京大阪_5天_0301-0305
         """
-        main_location = self._get_main_location()
         if self.display_name:
-            return f"{self.year:04d}-{self.month:02d}_{self.display_name}"
-        return f"{self.year:04d}-{self.month:02d}_{main_location}之旅"
+            # 用户自定义名称时，仍追加日期范围
+            start_str = self.start_date.strftime("%m%d")
+            end_str = self.end_date.strftime("%m%d")
+            days = (self.end_date.date() - self.start_date.date()).days + 1
+            if start_str == end_str:
+                return f"{self.year:04d}_{self.display_name}_{days}天_{start_str}"
+            return f"{self.year:04d}_{self.display_name}_{days}天_{start_str}-{end_str}"
 
-    def _get_main_location(self) -> str:
-        """找出出现次数最多的地点作为大行程主要地点"""
-        from collections import Counter
-        if not self.sub_trips:
+        location_summary = self._get_location_summary()
+        days = (self.end_date.date() - self.start_date.date()).days + 1
+        start_str = self.start_date.strftime("%m%d")
+        end_str = self.end_date.strftime("%m%d")
+
+        if start_str == end_str:
+            return f"{self.year:04d}_{location_summary}_{days}天_{start_str}"
+        return f"{self.year:04d}_{location_summary}_{days}天_{start_str}-{end_str}"
+
+    def _get_location_summary(self) -> str:
+        """
+        从所有子行程的文件中收集地点信息，生成省市摘要字符串。
+
+        策略：
+        - 遍历所有 item，按 (country, province, city) 去重并保留首次出现顺序
+        - 国内：缩写"省/市/地区/族自治州"等后缀，拼接为 "省缩写+城市缩写"
+          同一省份连续多个城市合并（如"黑龙江大兴安岭"）
+          不同省份用"·"分隔（如"黑龙江大兴安岭·吉林延边"）
+        - 境外：使用国家名（或城市名）
+        - 完全无位置信息时返回"旅行"
+        """
+        # 收集 (country, province, city) 三元组，去重保序
+        seen: set[tuple[str, str, str]] = set()
+        ordered: list[tuple[str, str, str]] = []
+        for sub in self.sub_trips:
+            for item in sub.items:
+                if not item.has_gps:
+                    continue
+                key = (item.country or "", item.province or "", item.city or "")
+                if key not in seen and any(key):
+                    seen.add(key)
+                    ordered.append(key)
+
+        if not ordered:
             return "旅行"
-        labels = [t.location_label for t in self.sub_trips if t.location_label]
-        if not labels:
-            return "旅行"
-        return Counter(labels).most_common(1)[0][0]
+
+        # 分离国内/境外
+        domestic = [(p, c) for (cn, p, c) in ordered if cn in ("", "中国", "CN")]
+        abroad   = [(cn, c) for (cn, p, c) in ordered if cn not in ("", "中国", "CN")]
+
+        parts: list[str] = []
+
+        # 处理国内：按省份分组，同省城市直接拼接，不同省用"·"分隔
+        if domestic:
+            # 按出现顺序分组（不打乱顺序）
+            province_groups: list[list[str]] = []  # [[province, city1, city2], ...]
+            current_province: str = ""
+            current_cities: list[str] = []
+
+            for (prov, city) in domestic:
+                prov_short = _shorten_place_name(prov)
+                city_short = _shorten_place_name(city)
+
+                if prov_short != current_province:
+                    if current_province:
+                        province_groups.append([current_province] + current_cities)
+                    current_province = prov_short
+                    current_cities = [city_short] if city_short and city_short != prov_short else []
+                else:
+                    if city_short and city_short != prov_short and city_short not in current_cities:
+                        current_cities.append(city_short)
+
+            if current_province:
+                province_groups.append([current_province] + current_cities)
+
+            # 每个省份组合成字符串，不同省用"·"连接
+            domestic_parts = []
+            for group in province_groups:
+                province_name = group[0]
+                cities = group[1:]
+                # 只取前2个城市，避免过长
+                cities = cities[:2]
+                if cities:
+                    domestic_parts.append(province_name + "".join(cities))
+                else:
+                    domestic_parts.append(province_name)
+            parts.extend(domestic_parts)
+
+        # 处理境外：按国家分组，同一国的城市拼接（类似国内省份逻辑）
+        if abroad:
+            country_groups: list[list[str]] = []  # [[country, city1, city2], ...]
+            current_country: str = ""
+            current_abroad_cities: list[str] = []
+
+            for (cn, city) in abroad:
+                cn_short = _shorten_place_name(cn)
+                city_short = _shorten_place_name(city)
+
+                if cn_short != current_country:
+                    if current_country:
+                        country_groups.append([current_country] + current_abroad_cities)
+                    current_country = cn_short
+                    current_abroad_cities = [city_short] if city_short and city_short != cn_short else []
+                else:
+                    if city_short and city_short != cn_short and city_short not in current_abroad_cities:
+                        current_abroad_cities.append(city_short)
+
+            if current_country:
+                country_groups.append([current_country] + current_abroad_cities)
+
+            for group in country_groups:
+                cn_name = group[0]
+                cities = group[1:][:2]  # 最多取2城市
+                parts.append(cn_name + "".join(cities))
+
+        result = "·".join(parts) if parts else "旅行"
+        # 防止名称过长（超过20字符截断）
+        if len(result) > 20:
+            result = result[:20]
+        return result
+
 
     @property
     def total_files(self) -> int:
         return sum(t.file_count for t in self.sub_trips)
+
+
+# ============================================================
+# 辅助函数
+# ============================================================
+
+def _shorten_place_name(name: str) -> str:
+    """
+    缩写行政区划名称，去掉常见后缀：
+    省、市、地区、盟、县、区、自治区、自治州、族自治州等
+
+    例：
+      "黑龙江省" → "黑龙江"
+      "大兴安岭地区" → "大兴安岭"
+      "延边朝鲜族自治州" → "延边"
+      "昆明市" → "昆明"
+      "东京都" → "东京"（日本）
+    """
+    if not name:
+        return ""
+    # 按长度从长到短排序，优先匹配长后缀
+    suffixes = [
+        "维吾尔自治区", "壮族自治区", "回族自治区",
+        "朝鲜族自治州", "哈萨克自治州", "藏族自治州",
+        "蒙古族自治州", "彝族自治州", "苗族侗族自治州",
+        "自治区", "自治州", "自治县",
+        "地区", "盟",
+        "省", "市", "县", "区", "都", "道", "府",
+    ]
+    for suffix in suffixes:
+        if name.endswith(suffix) and len(name) > len(suffix):
+            return name[: -len(suffix)]
+    return name
 
 
 # ============================================================

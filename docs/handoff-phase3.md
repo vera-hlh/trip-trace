@@ -60,15 +60,24 @@
 - `IMG_20250201_143440` → 漠河市 **北极镇**（新加 township 字段）
 - `IMG_20250202_111804` → **龙江第一湾风景区**（110200 风景名胜，2000m半径）
 
-### 2. 大行程文件夹命名（⚠️ 未实现）
+### 2. 大行程文件夹命名（✅ 已实现）
 
-用户期望格式：`{年份}_{省份+城市}_{天数}天_{MMDD}-{MMDD}`
+新格式：`{年份}_{省份+城市}_{天数}天_{MMDD}-{MMDD}`
 
-例：`2025_黑龙江大兴安岭·吉林延边_10天_0130-0208`
+例：
+- `2025_黑龙江大兴安岭漠河·吉林延边_10天_0130-0208`（跨省）
+- `2025_黑龙江大兴安岭漠河_10天_0130-0208`（单省多城市）
+- `2025_云南昆明_1天_0501`（单日）
+- `2025_日本東京大阪_3天_0401-0403`（境外）
+- `2025_东北雪乡_10天_0130-0208`（用户自定义名称，追加日期）
 
-**当前格式仍是**：`2025-01_大兴安岭地区之旅`
-
-**待实现**：修改 `archive_service.py` 中 `BigTrip.folder_name` 属性，从 sub_trips.items 收集 province+city 信息组成摘要。
+**实现细节**：
+- `BigTrip._get_location_summary()` 从所有子行程 items 收集 `(country, province, city)` 三元组（去重保序）
+- `_shorten_place_name()` 模块级辅助函数去掉行政后缀（省/市/地区/族自治州等）
+- 国内：同省城市直接拼接，不同省用 `·` 分隔，每省最多显示2城市
+- 境外：国家+城市拼接，不同国用 `·` 分隔
+- 超长截断（>20字符）
+- 无GPS数据回退为"旅行"
 
 ---
 
@@ -171,10 +180,8 @@ frontend/src/pages/
 
 ## 待完成任务
 
-### P0（立即可做）
-- [ ] **大行程文件夹命名**：改为 `{year}_{province+city}_{days}天_{MMDD}-{MMDD}` 格式
-  - 修改 `backend/app/services/archive_service.py` 的 `BigTrip.folder_name` 属性
-  - 需从 sub_trips.items 收集 province、city、country 信息
+### P0（已完成）
+- [x] **大行程文件夹命名**：已改为 `{year}_{province+city}_{days}天_{MMDD}-{MMDD}` 格式
 
 ### P1（近期）
 - [ ] 验证新地理编码效果（重跑测试，看漠河站/北极镇是否正确识别）
@@ -189,11 +196,9 @@ frontend/src/pages/
 项目在 C:\Dev\trip-trace，GitHub: https://github.com/vera-hlh/trip-trace。
 
 Phase 1~4 已完成，详情见 docs/handoff-phase3.md。
-最新 commit: 9b53176（township双层地点策略+best_location_label）
+最新 commit: feat: 大行程文件夹新命名格式（{year}_{省市}_{天数}天_{MMDD}-{MMDD}）
 
 当前待做：
-1. 大行程文件夹命名格式改进（{year}_{省市}_{天数}天_{MMDD}-{MMDD}）
-   - 修改 backend/app/services/archive_service.py 的 BigTrip.folder_name 属性
-   - 需从 sub_trips.items 收集所有文件的 province/city/country 汇总
-2. 重新运行测试流程验证 township 效果（分步执行避免超时）
+- 验证新地理编码效果（重跑测试，看漠河站/北极镇是否正确识别）
+  测试步骤见 handoff-phase3.md「测试步骤」章节（分步执行避免超时）
 ```
