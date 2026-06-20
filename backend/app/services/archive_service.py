@@ -73,8 +73,34 @@ class MediaItem:
 
     @property
     def best_location_label(self) -> str:
-        """最具体的位置标签：POI > 乡镇 > 区县 > 城市"""
-        return self.poi or self.township or self.district or self.city
+        """
+        地市 + POI 两层标签：城市缩写作为基础，叠加最具体的地点信息
+
+        优先级（detail）：POI > 乡镇 > 区县
+        组合规则：
+          - 有城市 + 有detail → 拼接，但若 detail 已以城市开头则不重复
+          - 只有城市           → 返回城市缩写
+          - 只有 detail        → 返回 detail
+          - 都没有             → 返回空字符串
+
+        例：
+          city=漠河市,  poi=漠河站       → "漠河站"   (detail 已含城市)
+          city=漠河市,  township=北极镇  → "漠河北极镇"
+          city=漠河市,  poi=             → "漠河"
+          city=延边朝鲜族自治州, poi=    → "延边"
+          city=,        poi=冰雪大世界   → "冰雪大世界"
+        """
+        city_short = _shorten_place_name(self.city) if self.city else ""
+        detail = self.poi or self.township or self.district or ""
+
+        if not city_short:
+            return detail
+        if not detail:
+            return city_short
+        # detail 已经包含城市名时，避免重复（如"漠河站"）
+        if detail.startswith(city_short):
+            return detail
+        return f"{city_short}{detail}"
 
 
 @dataclass
