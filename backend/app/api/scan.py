@@ -466,6 +466,7 @@ async def geocode_scanned_files(db: AsyncSession = Depends(get_db)):
                     f.district = loc.district
                     f.township = loc.township  # 乡镇级行政区（如北极镇）
                     f.country = loc.country or "中国"
+                    f.geocode_source = "gaode"
                 elif loc.country_code == "CN":
                     # 离线结果（英文）→ 翻译为中文双语格式
                     cn_city, cn_province = translate_cn_location(loc.city, loc.province)
@@ -477,12 +478,14 @@ async def geocode_scanned_files(db: AsyncSession = Depends(get_db)):
                     )
                     f.district = loc.district
                     f.country = loc.country
+                    f.geocode_source = "offline"
                 else:
                     # 国外地点，保留英文
                     f.city = loc.city
                     f.province = loc.province
                     f.district = loc.district
                     f.country = loc.country
+                    f.geocode_source = "offline"
 
                 # 写入 POI（景点名，高德 API 提供）
                 if loc.poi:
