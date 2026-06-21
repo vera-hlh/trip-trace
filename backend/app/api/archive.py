@@ -533,6 +533,15 @@ async def archive_execute(
                 duration = round(time.time() - start_time, 1)
                 status = "success" if errors == 0 else ("partial" if copied > 0 else "failed")
 
+                # 估算高德 API 使用次数：
+                # poi 和 township 只由高德 API 写入，每个唯一的 (city, poi/township) 组合
+                # 代表一次不重复的 API 调用（POI 聚类去重后的实际次数）
+                gaode_calls_estimate = len({
+                    (f.city, f.poi or f.township or "")
+                    for f in db_files
+                    if f.city and (f.poi or f.township)
+                })
+
                 log_entry = ArchiveLog(
                     user_id="local",
                     created_at=generated_at_iso,
@@ -545,7 +554,7 @@ async def archive_execute(
                     error_count=errors,
                     big_trips_count=len(big_trips),
                     sub_trips_count=sum(len(b.sub_trips) for b in big_trips),
-                    api_calls_used=0,   # geocoding 在单独步骤中，此处暂不追踪
+                    api_calls_used=gaode_calls_estimate,
                     duration_sec=duration,
                     status=status,
                     trip_log_generated=trip_log_count > 0,
