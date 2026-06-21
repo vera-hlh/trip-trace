@@ -46,9 +46,10 @@ async def _run_migrations() -> None:
     """
     migrations = [
         # (表名, 列名, 列定义)
-        ("files",  "user_id",   "VARCHAR NOT NULL DEFAULT 'local'"),
-        ("trips",  "user_id",   "VARCHAR NOT NULL DEFAULT 'local'"),
-        ("files",  "township",  "VARCHAR"),   # v0.8.x - 乡镇行政区划
+        ("files",  "user_id",        "VARCHAR NOT NULL DEFAULT 'local'"),
+        ("trips",  "user_id",        "VARCHAR NOT NULL DEFAULT 'local'"),
+        ("files",  "township",       "VARCHAR"),   # v0.8.x - 乡镇行政区划
+        ("files",  "geocode_source", "VARCHAR"),   # v0.9.x - 编码来源 'gaode'|'offline'
     ]
 
     async with AsyncSessionLocal() as session:

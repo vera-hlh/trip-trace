@@ -533,13 +533,13 @@ async def archive_execute(
                 duration = round(time.time() - start_time, 1)
                 status = "success" if errors == 0 else ("partial" if copied > 0 else "failed")
 
-                # 估算高德 API 使用次数：
-                # poi 和 township 只由高德 API 写入，每个唯一的 (city, poi/township) 组合
-                # 代表一次不重复的 API 调用（POI 聚类去重后的实际次数）
+                # 精确统计高德 API 调用次数：
+                # 仅统计 geocode_source='gaode' 的文件，按 (city, poi/township) 去重
+                # 每个唯一地点组合 = 一次 Gaode API 调用（POI 聚类的结果）
                 gaode_calls_estimate = len({
                     (f.city, f.poi or f.township or "")
                     for f in db_files
-                    if f.city and (f.poi or f.township)
+                    if getattr(f, "geocode_source", None) == "gaode"
                 })
 
                 log_entry = ArchiveLog(
