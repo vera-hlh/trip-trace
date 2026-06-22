@@ -426,6 +426,25 @@ class PoiClusterState:
 
 
 # ============================================================
+# 中国地理范围边界框判断（兜底，修复边境离线库误判）
+# ============================================================
+
+def _is_in_china_bbox(lat: float, lon: float) -> bool:
+    """
+    判断坐标是否在中国地理范围边界框内（粗略矩形判断）。
+
+    用于修复 reverse_geocoder 在中俄/中蒙/中越等边境地区的误判问题：
+    例如漠河北极镇坐标可能被离线库识别为俄罗斯 Yerofey Pavlovich，
+    但实际坐标在中国境内 → 需调用高德 API 获取正确中文地名。
+
+    范围参考（含港澳台、含黑龙江最北端、含新疆南疆）：
+      经度：73.0°E ~ 135.5°E
+      纬度：17.5°N ~ 53.6°N
+    """
+    return 73.0 <= lon <= 135.5 and 17.5 <= lat <= 53.6
+
+
+# ============================================================
 # 统一入口函数
 # ============================================================
 
@@ -473,7 +492,13 @@ async def get_location(
     api_called = False
 
     # 第三层：在线 API 增强（获取 POI 景点名）
-    if gaode_api_key and location.is_china:
+    #
+    # 触发条件：配置了高德 Key，且坐标在中国范围内。
+    # 注意：is_china 依赖离线库的国家判断，在中俄边境等地区可能误判为境外
+    # （如漠河北极镇被误识别为俄罗斯 Yerofey Pavlovich）。
+    # 因此额外用坐标边界框兜底：只要经纬度落在中国范围内就调用高德 API。
+    in_china = location.is_china or _is_in_china_bbox(lat, lon)
+    if gaode_api_key and in_china:
         online_loc = await reverse_geocode_gaode(lat, lon, gaode_api_key)
         if online_loc:
             # 合并：优先使用高德的中文地名
@@ -483,6 +508,8 @@ async def get_location(
             location.township = online_loc.township  # 乡镇级行政区（精确，来自高德 addressComponent）
             location.poi = online_loc.poi
             location.source = "gaode"
+            location.country = "中国"
+            location.country_code = "CN"
             api_called = True
 
     # 创建新的 POI 聚类
