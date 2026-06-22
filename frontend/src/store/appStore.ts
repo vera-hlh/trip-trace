@@ -22,6 +22,11 @@ export interface AppSettings {
 
 // ── 行程树数据结构（来自 archive/preview，可用户编辑）────────
 
+export interface SubTripFileItem {
+  name: string;   // 文件名（如 IMG_20250201_143440.jpg）
+  path: string;   // 完整原始路径（用于缩略图请求）
+}
+
 export interface SubTripData {
   folder: string;      // 原始文件夹名（后端生成）
   displayName: string; // 用户可编辑显示名称
@@ -29,6 +34,7 @@ export interface SubTripData {
   start_date: string | null;
   end_date: string | null;
   file_count: number;
+  files?: SubTripFileItem[];  // 文件列表（缩略图预览用）
 }
 
 export interface BigTripData {

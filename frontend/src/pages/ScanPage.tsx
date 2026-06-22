@@ -179,6 +179,102 @@ function EditableLabel({
   );
 }
 
+// ── 缩略图面板（子行程文件预览）────────────────────────────
+
+const THUMB_PAGE = 12; // 每次显示的缩略图数量
+
+function SubTripThumbnails({ files }: { files: Array<{ name: string; path: string }> }) {
+  const [showCount, setShowCount] = useState(THUMB_PAGE);
+
+  if (!files || files.length === 0) {
+    return (
+      <div className="px-4 py-3 text-xs text-slate-600 italic">
+        暂无文件信息（重新生成行程预览可获取）
+      </div>
+    );
+  }
+
+  const visible = files.slice(0, showCount);
+
+  const openInFolder = (filePath: string) => {
+    const electronAPI = (window as any).electronAPI;
+    if (electronAPI?.showItemInFolder) {
+      electronAPI.showItemInFolder(filePath);
+    } else {
+      alert(`文件路径：${filePath}`);
+    }
+  };
+
+  return (
+    <div className="px-4 pb-3 pt-2 bg-slate-950/40 space-y-3">
+      {/* 操作栏 */}
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-slate-500">
+          {files.length} 个文件
+          {files[0]?.name && (
+            <span className="ml-2 font-mono text-slate-600">
+              {files[0].name.slice(0, 30)}
+              {files[0].name.length > 30 ? "..." : ""}
+              {files.length > 1 ? ` 等` : ""}
+            </span>
+          )}
+        </span>
+        <button
+          onClick={() => openInFolder(files[0].path)}
+          title="在资源管理器中高亮显示第一张照片"
+          className="text-xs text-slate-500 hover:text-blue-400 border border-slate-700 hover:border-blue-700/50 px-2 py-0.5 rounded transition-colors"
+        >
+          📁 在资源管理器中显示
+        </button>
+      </div>
+
+      {/* 缩略图网格（4列） */}
+      <div className="grid grid-cols-4 gap-2">
+        {visible.map((file, i) => (
+          <div
+            key={i}
+            className="group relative cursor-pointer"
+            onClick={() => openInFolder(file.path)}
+            title={file.name}
+          >
+            <div className="aspect-square bg-slate-800 rounded-lg overflow-hidden border border-slate-700/50 group-hover:border-blue-600/50 transition-colors">
+              <img
+                src={`${API}/api/media/thumbnail?path=${encodeURIComponent(file.path)}&width=160&quality=70`}
+                alt={file.name}
+                loading="lazy"
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  // 加载失败（视频等）显示占位
+                  const target = e.currentTarget;
+                  target.style.display = "none";
+                  const parent = target.parentElement;
+                  if (parent) {
+                    parent.innerHTML = `<div class="w-full h-full flex items-center justify-center text-2xl text-slate-600">🎬</div>`;
+                  }
+                }}
+              />
+            </div>
+            <p className="mt-1 text-xs text-slate-500 truncate leading-tight">
+              {file.name}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      {/* 加载更多 */}
+      {files.length > showCount && (
+        <button
+          onClick={() => setShowCount((n) => n + THUMB_PAGE)}
+          className="w-full text-xs text-slate-500 hover:text-slate-300 py-1.5 border border-slate-700/50 hover:border-slate-600 rounded-lg transition-colors"
+        >
+          加载更多（还有 {files.length - showCount} 个）
+        </button>
+      )}
+    </div>
+  );
+}
+
+
 // ── 行程树 ───────────────────────────────────────────────────
 
 function TripTree({
@@ -193,6 +289,8 @@ function TripTree({
   onMergeSub: (bi: number, si: number) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+  // 展开缩略图预览的子行程 key 集合（格式："bi-si"）
+  const [previewOpen, setPreviewOpen] = useState<Set<string>>(new Set());
 
   const toggle = (i: number) =>
     setCollapsed((prev) => {
@@ -200,6 +298,15 @@ function TripTree({
       next.has(i) ? next.delete(i) : next.add(i);
       return next;
     });
+
+  const togglePreview = (key: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPreviewOpen((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  };
 
   if (trips.length === 0) {
     return (
@@ -257,58 +364,81 @@ function TripTree({
                     无子行程
                   </div>
                 ) : (
-                  big.sub_trips.map((sub, si) => (
-                    <div
-                      key={si}
-                      className="px-4 py-2.5 flex items-center justify-between bg-slate-900/30 hover:bg-slate-900/50 transition-colors"
-                    >
-                      {/* 左侧：序号 + 图标 + 名称 + 地点 */}
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="text-slate-600 text-xs w-5 text-right font-mono flex-shrink-0">
-                          {si + 1}
-                        </span>
-                        <span className="flex-shrink-0">📂</span>
-                        <EditableLabel
-                          value={sub.displayName || sub.folder}
-                          onSave={(name) => onRenameSub(bi, si, name)}
-                          className="text-sm text-emerald-300 hover:text-emerald-200 font-medium"
-                        />
-                        {sub.location && (
-                          <span className="text-xs bg-slate-700/80 text-slate-300 px-2 py-0.5 rounded-full flex-shrink-0">
-                            📍 {sub.location}
-                          </span>
+                  big.sub_trips.map((sub, si) => {
+                    const previewKey = `${bi}-${si}`;
+                    const isPreviewOpen = previewOpen.has(previewKey);
+                    return (
+                      <div key={si} className="bg-slate-900/30">
+                        {/* 子行程主行 */}
+                        <div className="px-4 py-2.5 flex items-center justify-between hover:bg-slate-900/50 transition-colors">
+                          {/* 左侧：序号 + 图标 + 名称 + 地点 */}
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="text-slate-600 text-xs w-5 text-right font-mono flex-shrink-0">
+                              {si + 1}
+                            </span>
+                            <span className="flex-shrink-0">📂</span>
+                            <EditableLabel
+                              value={sub.displayName || sub.folder}
+                              onSave={(name) => onRenameSub(bi, si, name)}
+                              className="text-sm text-emerald-300 hover:text-emerald-200 font-medium"
+                            />
+                            {sub.location && (
+                              <span className="text-xs bg-slate-700/80 text-slate-300 px-2 py-0.5 rounded-full flex-shrink-0">
+                                📍 {sub.location}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* 右侧：日期 + 文件数 + 按钮 */}
+                          <div className="flex items-center gap-2 text-xs text-slate-400 flex-shrink-0 ml-4">
+                            {sub.start_date && (
+                              <span>
+                                {sub.start_date.slice(5, 10)} →{" "}
+                                {sub.end_date?.slice(5, 10)}
+                              </span>
+                            )}
+                            <span>{sub.file_count} 个文件</span>
+
+                            {/* 缩略图预览按钮 */}
+                            <button
+                              onClick={(e) => togglePreview(previewKey, e)}
+                              title={isPreviewOpen ? "收起预览" : "展开预览缩略图"}
+                              className={clsx(
+                                "px-2 py-0.5 border rounded text-xs transition-colors",
+                                isPreviewOpen
+                                  ? "bg-blue-900/40 border-blue-700/50 text-blue-400"
+                                  : "bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600 hover:text-slate-200"
+                              )}
+                            >
+                              {isPreviewOpen ? "🙈 收起" : "🖼️ 预览"}
+                            </button>
+
+                            {/* 合并按钮 */}
+                            {si < big.sub_trips.length - 1 && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onMergeSub(bi, si);
+                                }}
+                                title={`与下一子行程「${
+                                  big.sub_trips[si + 1].displayName ||
+                                  big.sub_trips[si + 1].folder
+                                }」合并`}
+                                className="px-2 py-0.5 bg-slate-700 hover:bg-amber-800/50 border border-slate-600 hover:border-amber-600/60 rounded text-slate-400 hover:text-amber-300 transition-colors"
+                              >
+                                合并↓
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* 缩略图预览面板 */}
+                        {isPreviewOpen && (
+                          <SubTripThumbnails files={sub.files || []} />
                         )}
                       </div>
-
-                      {/* 右侧：日期 + 文件数 + 合并按钮 */}
-                      <div className="flex items-center gap-3 text-xs text-slate-400 flex-shrink-0 ml-4">
-                        {sub.start_date && (
-                          <span>
-                            {sub.start_date.slice(5, 10)} →{" "}
-                            {sub.end_date?.slice(5, 10)}
-                          </span>
-                        )}
-                        <span>{sub.file_count} 个文件</span>
-
-                        {/* 合并按钮（仅非最后一个子行程显示） */}
-                        {si < big.sub_trips.length - 1 && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onMergeSub(bi, si);
-                            }}
-                            title={`与下一子行程「${
-                              big.sub_trips[si + 1].displayName ||
-                              big.sub_trips[si + 1].folder
-                            }」合并`}
-                            className="px-2 py-0.5 bg-slate-700 hover:bg-amber-800/50 border border-slate-600 hover:border-amber-600/60 rounded text-slate-400 hover:text-amber-300 transition-colors"
-                          >
-                            合并↓
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             )}
@@ -588,7 +718,15 @@ export default function ScanPage() {
         const s = json.data.summary;
         setPreviewSummary(s);
 
-        // 将后端结构转为可编辑本地结构
+        // 构建文件映射：大行程文件夹::子行程文件夹 → 文件列表
+        const fileMap = new Map<string, Array<{ name: string; path: string }>>();
+        for (const p of json.data.preview as any[]) {
+          const key = `${p.big_trip_folder}::${p.sub_trip_folder}`;
+          if (!fileMap.has(key)) fileMap.set(key, []);
+          fileMap.get(key)!.push({ name: p.file_name, path: p.original_path });
+        }
+
+        // 将后端结构转为可编辑本地结构（含文件列表）
         const parsed: BigTripData[] = (json.data.trips_structure as any[]).map(
           (big) => ({
             folder: big.folder,
@@ -603,6 +741,7 @@ export default function ScanPage() {
               start_date: sub.start_date,
               end_date: sub.end_date,
               file_count: sub.file_count,
+              files: fileMap.get(`${big.folder}::${sub.folder}`) || [],
             })),
           })
         );
