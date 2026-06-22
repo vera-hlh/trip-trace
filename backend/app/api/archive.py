@@ -74,6 +74,7 @@ class ArchiveExecuteRequest(BaseModel):
     write_remarks: bool = False
     remark_template: str = "地点: {country}/{province}/{city}"
     trip_overrides: list[TripOverride] = []
+    trip_type: str = "mixed"   # "domestic" | "abroad" | "mixed"
 
 
 class CleanupRequest(BaseModel):
@@ -418,16 +419,47 @@ async def archive_execute(
                 "output_path": request.output_path
             })
 
-            # 5. 执行文件复制
+            # 5. 构建异常文件路径集合（按 trip_type 过滤）
+            from app.services.geocode_service import _is_in_china_bbox
+            anomaly_paths: set[str] = set()
+            if request.trip_type in ("domestic", "abroad"):
+                for f in db_files:
+                    if f.has_gps and f.latitude and f.longitude:
+                        in_china = _is_in_china_bbox(f.latitude, f.longitude)
+                        if request.trip_type == "domestic" and not in_china:
+                            anomaly_paths.add(f.original_path)
+                        elif request.trip_type == "abroad" and in_china:
+                            anomaly_paths.add(f.original_path)
+
+            # 6. 执行文件复制
             copied = 0
             skipped = 0
             errors = 0
             remark_ok = 0
+            manual_count = 0  # 路由到 _待手动整理/ 的文件数
+
+            MANUAL_FOLDER = "_待手动整理"
 
             for idx, item in enumerate(preview_items, 1):
                 await asyncio.sleep(0)
 
                 try:
+                    # 异常文件→路由到 _待手动整理/ 文件夹
+                    if item.original_path in anomaly_paths:
+                        manual_dir = os.path.join(request.output_path, MANUAL_FOLDER)
+                        os.makedirs(manual_dir, exist_ok=True)
+                        manual_target = os.path.join(manual_dir, item.file_name)
+                        if not os.path.exists(manual_target):
+                            shutil.copy2(item.original_path, manual_target)
+                            manual_count += 1
+                        yield _sse_event({
+                            "type": "manual",
+                            "current": idx, "total": total,
+                            "file": item.file_name,
+                            "target_folder": MANUAL_FOLDER,
+                        })
+                        continue
+
                     target_dir = os.path.dirname(item.target_path)
                     os.makedirs(target_dir, exist_ok=True)
 
@@ -576,6 +608,7 @@ async def archive_execute(
                 "copied": copied,
                 "skipped": skipped,
                 "errors": errors,
+                "manual_count": manual_count,
                 "remarks_written": remark_ok,
                 "trip_log_generated": trip_log_count,
                 "output_path": request.output_path,

@@ -30,6 +30,7 @@ interface ExecuteEvent {
   copied?: number;
   skipped?: number;
   errors?: number;
+  manual_count?: number;
   remarks_written?: number;
   output_path?: string;
 }
@@ -39,6 +40,7 @@ interface ExecuteStats {
   copied: number;
   skipped: number;
   errors: number;
+  manualCount: number;
   remarksWritten: number;
   outputPath: string;
 }
@@ -220,6 +222,7 @@ export default function ArchivePage() {
     sourceFolderPath,
     outputFolderPath,
     settings,
+    tripType,
     setCurrentPage,
   } = useAppStore();
 
@@ -266,6 +269,7 @@ export default function ArchivePage() {
           write_remarks: writeRemarks,
           remark_template: remarkTemplate,
           trip_overrides: overrides,
+          trip_type: tripType,
         }),
       });
 
@@ -293,6 +297,7 @@ export default function ArchivePage() {
                   copied: ev.copied || 0,
                   skipped: ev.skipped || 0,
                   errors: ev.errors || 0,
+                  manualCount: ev.manual_count || 0,
                   remarksWritten: ev.remarks_written || 0,
                   outputPath: ev.output_path || outputFolderPath,
                 });

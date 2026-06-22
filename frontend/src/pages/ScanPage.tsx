@@ -330,6 +330,8 @@ export default function ScanPage() {
     setCurrentPage,
     tripStructure,
     setTripStructure,
+    tripType,
+    setTripType,
   } = useAppStore();
 
   // 流程步骤
@@ -346,6 +348,12 @@ export default function ScanPage() {
   const [geocodeResult, setGeocodeResult] = useState<{
     updated: number;
     errors: number;
+  } | null>(null);
+
+  // 异常文件状态（与 trip_type 不匹配的文件）
+  const [anomalyResult, setAnomalyResult] = useState<{
+    count: number;
+    files: string[];
   } | null>(null);
 
   // POI 审核分组状态
@@ -443,13 +451,30 @@ export default function ScanPage() {
 
   const handleGeocode = async () => {
     setStep("geocoding");
-    addLog("开始逆地理编码...");
+    setAnomalyResult(null);
+    addLog(`开始逆地理编码（行程类型：${
+      tripType === "domestic" ? "国内" : tripType === "abroad" ? "境外" : "混合"
+    }）...`);
     try {
-      const res = await fetch(`${API}/api/scan/geocode`, { method: "POST" });
+      const res = await fetch(`${API}/api/scan/geocode`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trip_type: tripType }),
+      });
       const data = await res.json();
       if (data.success) {
         setGeocodeResult({ updated: data.updated, errors: data.errors || 0 });
         addLog(`地理编码完成：更新 ${data.updated} 个文件`);
+
+        // 显示异常文件警告（坐标与行程类型不匹配）
+        if (data.anomaly_count > 0) {
+          setAnomalyResult({
+            count: data.anomaly_count,
+            files: data.anomaly_files || [],
+          });
+          addLog(`⚠️ 检测到 ${data.anomaly_count} 个异常文件（GPS坐标与行程类型不匹配）`);
+        }
+
         setStep("geocode-done");
         // 地理编码完成后自动加载 POI 分组供审核
         await handleLoadPoiGroups();
@@ -924,6 +949,50 @@ export default function ScanPage() {
             )}
           </div>
 
+          {/* 行程类型选择器（仅 scan-done 时显示，地理编码后锁定） */}
+          {step === "scan-done" && (
+            <div className="space-y-2 pt-1">
+              <p className="text-xs text-slate-400 font-medium">选择本次行程类型：</p>
+              <div className="grid grid-cols-3 gap-2">
+                {(
+                  [
+                    { value: "domestic", icon: "🇨🇳", label: "国内行程", desc: "高德 API 精确地名" },
+                    { value: "abroad",   icon: "🌍", label: "境外行程", desc: "离线库（英文地名）" },
+                    { value: "mixed",    icon: "🗺️",  label: "混合行程", desc: "自动国内/境外分发" },
+                  ] as const
+                ).map(({ value, icon, label, desc }) => (
+                  <button
+                    key={value}
+                    onClick={() => setTripType(value)}
+                    className={clsx(
+                      "flex flex-col items-center p-3 rounded-xl border text-xs transition-all",
+                      tripType === value
+                        ? "bg-purple-900/40 border-purple-600/60 text-purple-300"
+                        : "bg-slate-800/60 border-slate-700/50 text-slate-400 hover:border-slate-600"
+                    )}
+                  >
+                    <span className="text-lg mb-1">{icon}</span>
+                    <span className="font-medium">{label}</span>
+                    <span className="text-slate-500 mt-0.5">{desc}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-amber-400/70">
+                ⚠️ 地理编码使用高德地图 API，对境外 GPS 坐标会返回错误或空结果。如有境外照片，请选择「境外」或「混合」行程。
+              </p>
+            </div>
+          )}
+
+          {/* 已锁定时显示当前行程类型 */}
+          {!["scan-done"].includes(step) && (
+            <p className="text-xs text-slate-500">
+              行程类型：
+              <span className="text-purple-400 font-medium ml-1">
+                {tripType === "domestic" ? "🇨🇳 国内" : tripType === "abroad" ? "🌍 境外" : "🗺️ 混合"}
+              </span>
+            </p>
+          )}
+
           {geocodeResult ? (
             <p className="text-xs text-slate-400">
               已更新{" "}
@@ -937,10 +1006,35 @@ export default function ScanPage() {
                 </span>
               )}
             </p>
-          ) : (
+          ) : step !== "scan-done" && (
             <p className="text-xs text-slate-500">
               将 GPS 坐标转换为城市/省份名称，用于行程命名和归档文件夹
             </p>
+          )}
+
+          {/* 异常文件警告 */}
+          {anomalyResult && anomalyResult.count > 0 && (
+            <div className="p-3 bg-amber-900/20 border border-amber-700/40 rounded-lg space-y-2">
+              <p className="text-xs text-amber-300 font-medium">
+                ⚠️ 检测到 {anomalyResult.count} 个文件的 GPS 位置与选择的「
+                {tripType === "domestic" ? "国内" : "境外"}行程」不符
+              </p>
+              <p className="text-xs text-slate-400">
+                这些文件归档时将复制到输出目录下的{" "}
+                <code className="bg-slate-700 px-1 rounded text-amber-300">_待手动整理/</code>{" "}
+                文件夹，可在归档完成后手动处理。
+              </p>
+              {anomalyResult.files.length > 0 && (
+                <div className="text-xs text-slate-500 font-mono max-h-20 overflow-y-auto">
+                  {anomalyResult.files.slice(0, 5).map((f, i) => (
+                    <div key={i}>· {f}</div>
+                  ))}
+                  {anomalyResult.count > 5 && (
+                    <div className="text-slate-600">...还有 {anomalyResult.count - 5} 个文件</div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
