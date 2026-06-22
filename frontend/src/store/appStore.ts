@@ -61,6 +61,10 @@ interface AppState {
   tripStructure: BigTripData[] | null;
   setTripStructure: (trips: BigTripData[] | null) => void;
 
+  // 行程类型（持久化 - 影响地理编码策略和异常文件处理）
+  tripType: "domestic" | "abroad" | "mixed";
+  setTripType: (type: "domestic" | "abroad" | "mixed") => void;
+
   // 后端连接状态（不持久化，运行时检测）
   backendReady: boolean;
   setBackendReady: (ready: boolean) => void;
@@ -94,6 +98,10 @@ export const useAppStore = create<AppState>()(
       tripStructure: null,
       setTripStructure: (trips) => set({ tripStructure: trips }),
 
+      // 行程类型
+      tripType: "domestic" as const,
+      setTripType: (type) => set({ tripType: type }),
+
       // 后端状态
       backendReady: false,
       setBackendReady: (ready) => set({ backendReady: ready }),
@@ -105,6 +113,7 @@ export const useAppStore = create<AppState>()(
         outputFolderPath: s.outputFolderPath,
         settings: s.settings,
         tripStructure: s.tripStructure,
+        tripType: s.tripType,
       }),
     }
   )

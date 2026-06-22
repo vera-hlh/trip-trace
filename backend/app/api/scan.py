@@ -40,6 +40,11 @@ class ScanRequest(BaseModel):
     options: dict = {}
 
 
+class GeocodeRequest(BaseModel):
+    """地理编码请求参数"""
+    trip_type: str = "mixed"   # "domestic"=国内 | "abroad"=境外 | "mixed"=混合
+
+
 class ScanStatusResponse(BaseModel):
     total_files: int
     with_gps: int
@@ -379,7 +384,10 @@ async def clear_scan_data(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/scan/geocode")
-async def geocode_scanned_files(db: AsyncSession = Depends(get_db)):
+async def geocode_scanned_files(
+    body: GeocodeRequest = None,
+    db: AsyncSession = Depends(get_db),
+):
     """
     对已扫描的有 GPS 但无城市信息的文件批量做逆地理编码
 
@@ -388,13 +396,19 @@ async def geocode_scanned_files(db: AsyncSession = Depends(get_db)):
       2. POI 聚类复用（同行程同地点不重复调用 API）
       3. 高德地图 API（若已配置 Key，则获取精确中文地名 + POI 景点名）
 
-    返回更新数量统计
+    trip_type 参数：
+      "domestic" = 国内行程（只用高德，境外坐标标记为异常）
+      "abroad"   = 境外行程（跳过高德，中国坐标标记为异常）
+      "mixed"    = 混合行程（国内高德 + 境外离线，无异常检测）
+
+    返回更新数量统计 + 异常文件摘要
     """
     from app.core.config import settings
     from app.services.geocode_service import (
         get_location,
         translate_cn_location,
         PoiClusterState,
+        _is_in_china_bbox,
     )
     from datetime import datetime as _dt
 
@@ -499,6 +513,29 @@ async def geocode_scanned_files(db: AsyncSession = Depends(get_db)):
 
     await db.commit()
 
+    trip_type = (body.trip_type if body else "mixed")
+
+    # 异常文件检测（按 trip_type 检查坐标是否与行程类型匹配）
+    anomaly_files: list[str] = []
+    if trip_type in ("domestic", "abroad"):
+        all_gps_result = await db.execute(
+            select(MediaFile).where(
+                MediaFile.has_gps == True,        # noqa
+                MediaFile.city.is_not(None),      # 已编码
+                MediaFile.latitude.is_not(None),
+                MediaFile.longitude.is_not(None),
+            )
+        )
+        all_gps_files = all_gps_result.scalars().all()
+        for f in all_gps_files:
+            in_china = _is_in_china_bbox(f.latitude, f.longitude)
+            is_anomaly = (
+                (trip_type == "domestic" and not in_china) or
+                (trip_type == "abroad" and in_china)
+            )
+            if is_anomaly:
+                anomaly_files.append(f.file_name)
+
     gaode_note = f"（高德 API 调用 {api_calls} 次）" if gaode_key else "（未配置高德 Key，仅离线模式）"
     return {
         "success": True,
@@ -506,5 +543,8 @@ async def geocode_scanned_files(db: AsyncSession = Depends(get_db)):
         "errors": errors,
         "api_calls": api_calls,
         "total_processed": len(files),
+        "trip_type": trip_type,
+        "anomaly_count": len(anomaly_files),
+        "anomaly_files": anomaly_files[:20],  # 最多返回前20个文件名
         "message": f"已为 {updated} 个文件更新地理位置信息 {gaode_note}",
     }
