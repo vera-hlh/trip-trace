@@ -229,52 +229,54 @@ _TRAVEL_POI_TYPES = "|".join([
     "190108",  # 村庄级地名（网红村庄：乌镇、西塘、西江苗寨等）
 ])
 
-# ── POI 优先级（前缀匹配，从高到低）────────────────────────────
-_POI_PRIORITY_PREFIXES = [
-    "1102",    # 风景名胜（国家/省级景点、世界遗产、寺庙道观、海滩…）
-    "1907",    # 热点地名
-    "1906",    # 标志性建筑物
-    "1902",    # 自然地名（山/湖/峡谷/冰川…）
-    "1101",    # 公园广场
-    "1502",    # 火车站（旅行重要节点，150200前缀）
-    "1401",    # 博物馆
-    "1402",    # 展览馆
-    "1404",    # 美术馆
-    "0804",    # 度假疗养场所
-    "0610",    # 特色商业街
-    "0805",    # 休闲场所
+# ── POI 优先级关键字（基于 type 字段字符串匹配，从高到低）──────
+# 注意：高德 regeocode.pois 返回的是 type 字段（中文描述），不是 typecode
+# type 格式：'风景名胜;风景名胜相关;旅游景点' 等，用关键字包含判断
+_POI_TYPE_KEYWORDS = [
+    "风景名胜",   # 景区/旅游景点（最高优先级）
+    "热点地名",   # 著名地点（如广场、步行街地名）
+    "标志性建筑", # 地标建筑
+    "自然地名",   # 山/湖/峡谷/冰川
+    "公园",       # 公园广场
+    "火车站",     # 交通节点
+    "博物馆",     # 博物馆
+    "展览馆",     # 展览馆
+    "美术馆",     # 美术馆
+    "度假",       # 度假疗养
+    "商业街",     # 特色商业街/步行街
+    "休闲",       # 休闲场所/游乐场
+    "村庄",       # 网红村庄（最低优先级）
 ]
-# 特定精确匹配类型码（最低优先级，不在前缀列表中）
-_VILLAGE_TYPECODE = "190108"
 
 
 def _select_best_travel_poi(pois: list) -> str:
     """
-    从高德返回的 pois 列表中，按优先级选出最佳旅行相关 POI 名称。
+    从高德 regeocode.pois 列表中，按优先级选出最佳旅行相关 POI 名称。
 
-    优先级：风景名胜 > 热点地名 > 标志性建筑 > 自然地名 >
-           博物馆/展览馆 > 度假地 > 商业街 > 休闲场所 > 村庄
+    高德 regeo API 返回的 POI 只有 type 字符串字段（如'风景名胜;风景名胜相关;旅游景点'），
+    没有 typecode 数字字段。改为基于 type 关键字匹配 + poiweight 排序。
 
-    若无旅行相关 POI，返回空字符串（调用方显示到城市级别即可）。
+    优先级：风景名胜 > 热点地名 > 标志性建筑 > 自然地名 > 公园 >
+           火车站 > 博物馆 > 展览馆 > 美术馆 > 度假 > 商业街 > 休闲 > 村庄
+
+    若无匹配，返回空字符串（调用方显示到城市/乡镇级别）。
     """
     if not pois:
         return ""
 
-    # 按优先级前缀匹配
-    for prefix in _POI_PRIORITY_PREFIXES:
+    for keyword in _POI_TYPE_KEYWORDS:
+        # 收集匹配关键字的所有候选，用 poiweight 排序取最优
+        candidates: list[tuple[float, str]] = []
         for poi in pois:
-            typecode = str(poi.get("typecode", ""))
-            if typecode.startswith(prefix):
+            type_str = poi.get("type", "") or ""
+            if keyword in type_str:
                 name = poi.get("name", "").strip()
+                weight = float(poi.get("poiweight", 0) or 0)
                 if name:
-                    return name
-
-    # 最低优先级：村庄级地名（精确匹配）
-    for poi in pois:
-        if str(poi.get("typecode", "")) == _VILLAGE_TYPECODE:
-            name = poi.get("name", "").strip()
-            if name:
-                return name
+                    candidates.append((weight, name))
+        if candidates:
+            candidates.sort(reverse=True)  # 权重高的优先
+            return candidates[0][1]
 
     return ""  # 无旅行相关 POI
 
