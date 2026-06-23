@@ -43,6 +43,7 @@ class ScanRequest(BaseModel):
 class GeocodeRequest(BaseModel):
     """地理编码请求参数"""
     trip_type: str = "mixed"   # "domestic"=国内 | "abroad"=境外 | "mixed"=混合
+    force_repoi: bool = False  # True: 重新处理"已有city但poi为空"的文件（修复旧数据）
 
 
 class ScanStatusResponse(BaseModel):
@@ -414,36 +415,46 @@ async def geocode_scanned_files(
 
     gaode_key = settings.gaode_api_key  # 读取 .env 中的 Key
 
-    # 查找有 GPS 但尚未地理编码（无 city）的文件，按时间排序
-    #
-    # 跳过逻辑（city IS NOT NULL → 跳过）：
-    #   - 已有 city + POI → 完整处理过，跳过
-    #   - 已有 city，无 POI → 也跳过（附近无旅行相关POI是正常结果，不再重复调用API）
-    #
-    # 典型使用场景：
-    #   1. 重复运行：重新扫描同一文件夹时，已处理文件直接跳过
-    #   2. 额度中断恢复：API额度耗尽后补充额度，只对未处理文件继续
-    #   3. 新增文件补扫：文件夹中新增的照片（无city）自动被识别和处理
-    result = await db.execute(
-        select(MediaFile)
-        .where(
-            MediaFile.has_gps == True,    # noqa
-            MediaFile.city.is_(None),     # 跳过已有city的文件（已处理过）
-        )
-        .order_by(MediaFile.datetime_original)
-        .limit(500)
-    )
-    files = result.scalars().all()
+    force_repoi = (body.force_repoi if body else False)
 
-    if not files:
-        return {"success": True, "updated": 0, "message": "无需要地理编码的文件"}
+    if force_repoi:
+        # force_repoi 模式：重新处理"已有city但poi为空"的文件，只更新 poi 字段
+        # 场景：之前用旧代码处理过（typecode匹配bug导致poi全为空），现在修复后重新获取
+        result = await db.execute(
+            select(MediaFile)
+            .where(
+                MediaFile.has_gps == True,        # noqa
+                MediaFile.city.is_not(None),      # 已有城市（已地理编码过）
+                MediaFile.poi.is_(None),           # 但 poi 为空（需要重新获取）
+                MediaFile.geocode_source == "gaode",  # 确认是高德编码结果（才有POI数据）
+            )
+            .order_by(MediaFile.datetime_original)
+            .limit(500)
+        )
+        files = result.scalars().all()
+        if not files:
+            return {"success": True, "updated": 0, "message": "无需要补充 POI 的文件"}
+    else:
+        # 默认模式：处理"有GPS但无city"的文件
+        result = await db.execute(
+            select(MediaFile)
+            .where(
+                MediaFile.has_gps == True,    # noqa
+                MediaFile.city.is_(None),     # 跳过已有city的文件（已处理过）
+            )
+            .order_by(MediaFile.datetime_original)
+            .limit(500)
+        )
+        files = result.scalars().all()
+        if not files:
+            return {"success": True, "updated": 0, "message": "无需要地理编码的文件"}
 
     updated = 0
     errors = 0
     api_calls = 0
 
-    # POI 聚类状态（跨文件复用，减少高德 API 调用次数）
-    poi_clusters: list[PoiClusterState] = []
+    # POI 聚类（force_repoi 模式下禁用，避免跨文件复用错误POI）
+    poi_clusters: list[PoiClusterState] = [] if not force_repoi else []
 
     for f in files:
         if not f.latitude or not f.longitude:
@@ -459,53 +470,59 @@ async def geocode_scanned_files(
                 except (ValueError, AttributeError):
                     pass
 
-            # 调用三层统一接口
-            loc, api_called = await get_location(
-                lat=f.latitude,
-                lon=f.longitude,
-                dt=dt,
-                gaode_api_key=gaode_key,
-                poi_clusters=poi_clusters,
-                time_threshold_hours=settings.small_trip_threshold_hours,
-            )
-
-            if api_called:
+            if force_repoi:
+                # force_repoi 模式：直接调用高德 API，只更新 poi 字段
+                from app.services.geocode_service import reverse_geocode_gaode
+                online_loc = await reverse_geocode_gaode(f.latitude, f.longitude, gaode_key)
                 api_calls += 1
+                if online_loc and online_loc.poi:
+                    f.poi = online_loc.poi
+                    updated += 1
+                    logger.info(f"force_repoi: {f.file_name} → poi={online_loc.poi!r}")
+            else:
+                # 正常模式：调用三层统一接口
+                loc, api_called = await get_location(
+                    lat=f.latitude,
+                    lon=f.longitude,
+                    dt=dt,
+                    gaode_api_key=gaode_key,
+                    poi_clusters=poi_clusters,
+                    time_threshold_hours=settings.small_trip_threshold_hours,
+                )
 
-            if loc:
-                if loc.source == "gaode":
-                    # 高德返回直接中文，无需翻译
-                    f.city = loc.city
-                    f.province = loc.province
-                    f.district = loc.district
-                    f.township = loc.township  # 乡镇级行政区（如北极镇）
-                    f.country = loc.country or "中国"
-                    f.geocode_source = "gaode"
-                elif loc.country_code == "CN":
-                    # 离线结果（英文）→ 翻译为中文双语格式
-                    cn_city, cn_province = translate_cn_location(loc.city, loc.province)
-                    f.city = f"{cn_city} ({loc.city})" if cn_city != loc.city else loc.city
-                    f.province = (
-                        f"{cn_province} ({loc.province})"
-                        if cn_province != loc.province
-                        else loc.province
-                    )
-                    f.district = loc.district
-                    f.country = loc.country
-                    f.geocode_source = "offline"
-                else:
-                    # 国外地点，保留英文
-                    f.city = loc.city
-                    f.province = loc.province
-                    f.district = loc.district
-                    f.country = loc.country
-                    f.geocode_source = "offline"
+                if api_called:
+                    api_calls += 1
 
-                # 写入 POI（景点名，高德 API 提供）
-                if loc.poi:
-                    f.poi = loc.poi
+                if loc:
+                    if loc.source == "gaode":
+                        f.city = loc.city
+                        f.province = loc.province
+                        f.district = loc.district
+                        f.township = loc.township
+                        f.country = loc.country or "中国"
+                        f.geocode_source = "gaode"
+                    elif loc.country_code == "CN":
+                        cn_city, cn_province = translate_cn_location(loc.city, loc.province)
+                        f.city = f"{cn_city} ({loc.city})" if cn_city != loc.city else loc.city
+                        f.province = (
+                            f"{cn_province} ({loc.province})"
+                            if cn_province != loc.province
+                            else loc.province
+                        )
+                        f.district = loc.district
+                        f.country = loc.country
+                        f.geocode_source = "offline"
+                    else:
+                        f.city = loc.city
+                        f.province = loc.province
+                        f.district = loc.district
+                        f.country = loc.country
+                        f.geocode_source = "offline"
 
-                updated += 1
+                    if loc.poi:
+                        f.poi = loc.poi
+
+                    updated += 1
 
         except Exception as e:
             errors += 1
