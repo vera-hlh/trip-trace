@@ -50,16 +50,26 @@ interface PreviewSummary {
 }
 
 // POI 审核分组
+interface PoiCandidate {
+  name: string;
+  type: string;
+  distance: string | number;
+}
+
 interface PoiGroup {
   province: string;
   city: string;
   poi: string;        // 当前 POI（空=仅城市级别）
   poi_type?: string;  // POI 类型字符串（新增，来自高德 place/around）
+  lat?: number;       // 代表性坐标（用于候选 POI 查询）
+  lon?: number;
   file_count: number;
   // 本地编辑状态
   draft?: string;     // 编辑草稿
   editing?: boolean;
   saving?: boolean;
+  candidates?: PoiCandidate[] | null;  // 候选 POI 列表（按需加载）
+  loadingCandidates?: boolean;
 }
 
 /** 根据 poi_type 字符串生成标签显示 */
@@ -708,6 +718,40 @@ export default function ScanPage() {
     }
   };
 
+  // ── POI 审核：进入编辑 + 加载候选 ────────────────────────────
+
+  const handleStartEditPoi = async (idx: number) => {
+    const group = poiGroups[idx];
+    // 设置编辑状态 + 开始加载候选
+    setPoiGroups((prev) =>
+      prev.map((g, i) =>
+        i === idx ? { ...g, editing: true, draft: g.poi, loadingCandidates: true, candidates: null } : g
+      )
+    );
+    // 如果有坐标，按需拉取候选
+    if (group.lat && group.lon) {
+      try {
+        const res = await fetch(
+          `${API}/api/scan/poi-candidates?lat=${group.lat}&lon=${group.lon}`
+        );
+        const data = await res.json();
+        setPoiGroups((prev) =>
+          prev.map((g, i) =>
+            i === idx ? { ...g, loadingCandidates: false, candidates: data.candidates || [] } : g
+          )
+        );
+      } catch {
+        setPoiGroups((prev) =>
+          prev.map((g, i) => i === idx ? { ...g, loadingCandidates: false, candidates: [] } : g)
+        );
+      }
+    } else {
+      setPoiGroups((prev) =>
+        prev.map((g, i) => i === idx ? { ...g, loadingCandidates: false, candidates: [] } : g)
+      );
+    }
+  };
+
   // ── POI 审核：保存单组修改 ─────────────────────────────────
 
   const handleSavePoiGroup = async (idx: number) => {
@@ -1305,40 +1349,94 @@ export default function ScanPage() {
                 {/* POI 编辑区 */}
                 <div className="flex-1 min-w-0">
                   {group.editing ? (
-                    <input
-                      type="text"
-                      value={group.draft ?? ""}
-                      onChange={(e) =>
-                        setPoiGroups((prev) =>
-                          prev.map((g, i) =>
-                            i === idx ? { ...g, draft: e.target.value } : g
-                          )
-                        )
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleSavePoiGroup(idx);
-                        if (e.key === "Escape")
+                    <div className="space-y-1.5">
+                      {/* 候选 chips（按需加载）*/}
+                      {group.loadingCandidates && (
+                        <div className="text-xs text-slate-500 animate-pulse">⏳ 加载候选...</div>
+                      )}
+                      {group.candidates && group.candidates.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {group.candidates.map((c, ci) => {
+                            // 提取 type emoji
+                            const t = c.type;
+                            const emoji = t.includes("风景名胜") ? "🏞️"
+                              : t.includes("热点地名") || t.includes("标志") ? "📍"
+                              : t.includes("自然地名") ? "🌊"
+                              : t.includes("公园") ? "🌳"
+                              : t.includes("博物") || t.includes("展览") || t.includes("美术") ? "🏛️"
+                              : t.includes("火车站") ? "🚉"
+                              : t.includes("休闲") || t.includes("度假") ? "🎪"
+                              : t.includes("村庄") ? "⚠️"
+                              : "📌";
+                            const isSelected = group.draft === c.name;
+                            return (
+                              <button
+                                key={ci}
+                                onClick={() =>
+                                  setPoiGroups((prev) =>
+                                    prev.map((g, i) => i === idx ? { ...g, draft: c.name } : g)
+                                  )
+                                }
+                                title={`${c.type} | ${c.distance}m`}
+                                className={clsx(
+                                  "text-xs px-2 py-0.5 rounded-lg border transition-all",
+                                  isSelected
+                                    ? "bg-emerald-900/40 border-emerald-600/60 text-emerald-300"
+                                    : "bg-slate-700/60 border-slate-600 text-slate-300 hover:border-blue-500/60 hover:text-blue-300"
+                                )}
+                              >
+                                {emoji} {c.name}
+                                <span className="text-slate-500 ml-1">{c.distance}m</span>
+                              </button>
+                            );
+                          })}
+                          {/* 清空选项 */}
+                          <button
+                            onClick={() =>
+                              setPoiGroups((prev) =>
+                                prev.map((g, i) => i === idx ? { ...g, draft: "" } : g)
+                              )
+                            }
+                            title="清空 POI（仅显示城市）"
+                            className={clsx(
+                              "text-xs px-2 py-0.5 rounded-lg border transition-all",
+                              !group.draft
+                                ? "bg-slate-600 border-slate-500 text-slate-200"
+                                : "bg-slate-700/60 border-slate-600 text-slate-500 hover:text-slate-400"
+                            )}
+                          >
+                            ✕ 清空
+                          </button>
+                        </div>
+                      )}
+                      {/* 自定义输入 */}
+                      <input
+                        type="text"
+                        value={group.draft ?? ""}
+                        onChange={(e) =>
                           setPoiGroups((prev) =>
                             prev.map((g, i) =>
-                              i === idx
-                                ? { ...g, editing: false, draft: g.poi }
-                                : g
+                              i === idx ? { ...g, draft: e.target.value } : g
                             )
-                          );
-                      }}
-                      placeholder="输入 POI 名称（留空=仅显示城市）"
-                      autoFocus
-                      className="w-full bg-slate-700 border border-blue-500 rounded px-2 py-0.5 text-sm text-white outline-none"
-                    />
+                          )
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleSavePoiGroup(idx);
+                          if (e.key === "Escape")
+                            setPoiGroups((prev) =>
+                              prev.map((g, i) =>
+                                i === idx ? { ...g, editing: false, draft: g.poi } : g
+                              )
+                            );
+                        }}
+                        placeholder={group.candidates?.length ? "或输入自定义名称..." : "输入 POI 名称（留空=仅显示城市）"}
+                        autoFocus={!group.candidates}
+                        className="w-full bg-slate-700 border border-blue-500 rounded px-2 py-0.5 text-sm text-white outline-none"
+                      />
+                    </div>
                   ) : (
                     <span
-                      onClick={() =>
-                        setPoiGroups((prev) =>
-                          prev.map((g, i) =>
-                            i === idx ? { ...g, editing: true, draft: g.poi } : g
-                          )
-                        )
-                      }
+                      onClick={() => handleStartEditPoi(idx)}
                       className="cursor-pointer hover:text-blue-300 transition-colors"
                     >
                       {group.poi ? (
