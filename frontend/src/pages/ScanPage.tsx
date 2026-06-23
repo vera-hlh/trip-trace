@@ -486,6 +486,10 @@ export default function ScanPage() {
     files: string[];
   } | null>(null);
 
+  // 补充 POI 状态（force_repoi）
+  const [repoiRunning, setRepoiRunning] = useState(false);
+  const [repoiResult, setRepoiResult] = useState<{ updated: number; api_calls: number } | null>(null);
+
   // POI 审核分组状态
   const [poiGroups, setPoiGroups] = useState<PoiGroup[]>([]);
   const [poiGroupsLoading, setPoiGroupsLoading] = useState(false);
@@ -615,6 +619,33 @@ export default function ScanPage() {
     } catch (e) {
       addLog(`地理编码请求失败: ${e}`);
       setStep("scan-done");
+    }
+  };
+
+  // ── 补充 POI（force_repoi）─────────────────────────────────
+
+  const handleRepoi = async () => {
+    setRepoiRunning(true);
+    setRepoiResult(null);
+    addLog("开始补充景点 POI（重新处理已有城市但无 POI 的文件）...");
+    try {
+      const res = await fetch(`${API}/api/scan/geocode`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trip_type: tripType, force_repoi: true }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRepoiResult({ updated: data.updated, api_calls: data.api_calls || 0 });
+        addLog(`补充 POI 完成：更新 ${data.updated} 个文件，调用高德 API ${data.api_calls || 0} 次`);
+        await handleLoadPoiGroups();
+      } else {
+        addLog(`补充 POI 失败: ${JSON.stringify(data)}`);
+      }
+    } catch (e) {
+      addLog(`补充 POI 请求失败: ${e}`);
+    } finally {
+      setRepoiRunning(false);
     }
   };
 
@@ -1149,6 +1180,33 @@ export default function ScanPage() {
             <p className="text-xs text-slate-500">
               将 GPS 坐标转换为城市/省份名称，用于行程命名和归档文件夹
             </p>
+          )}
+
+          {/* 补充景点 POI 按钮（地理编码完成后显示，修复旧数据 POI 缺失） */}
+          {["geocode-done", "previewing", "done"].includes(step) && (
+            <div className="flex items-center justify-between pt-1 border-t border-slate-700/30">
+              <div className="text-xs text-slate-500">
+                {repoiResult ? (
+                  <span className="text-emerald-400">
+                    ✅ 已补充 {repoiResult.updated} 个文件的景点 POI（API 调用 {repoiResult.api_calls} 次）
+                  </span>
+                ) : (
+                  <span>已有城市数据但无景点名？可尝试补充 POI</span>
+                )}
+              </div>
+              <button
+                onClick={handleRepoi}
+                disabled={repoiRunning}
+                className={clsx(
+                  "px-3 py-1 rounded-lg text-xs font-medium transition-all flex-shrink-0",
+                  repoiRunning
+                    ? "bg-slate-700 text-slate-500 cursor-not-allowed animate-pulse"
+                    : "bg-slate-700 hover:bg-purple-800/60 border border-slate-600 hover:border-purple-600/50 text-slate-400 hover:text-purple-300"
+                )}
+              >
+                {repoiRunning ? "补充中..." : "🔧 补充景点 POI"}
+              </button>
+            </div>
           )}
 
           {/* 异常文件警告 */}
