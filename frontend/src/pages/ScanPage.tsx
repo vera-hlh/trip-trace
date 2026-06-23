@@ -945,6 +945,31 @@ export default function ScanPage() {
         ))}
       </div>
 
+      {/* ── 修复工具栏（始终可见，不依赖 step 状态）─────── */}
+      <div className="flex items-center justify-between bg-slate-800/40 border border-slate-700/30 rounded-xl px-4 py-2.5">
+        <div className="text-xs text-slate-500">
+          {repoiResult ? (
+            <span className="text-emerald-400">
+              ✅ 已补充 {repoiResult.updated} 个文件的景点 POI（高德 API {repoiResult.api_calls} 次）
+            </span>
+          ) : (
+            <span>🔧 <strong className="text-slate-400">补充景点 POI</strong>：修复已有城市名但缺少景点名的旧数据</span>
+          )}
+        </div>
+        <button
+          onClick={handleRepoi}
+          disabled={repoiRunning}
+          className={clsx(
+            "ml-4 px-3 py-1 rounded-lg text-xs font-medium transition-all flex-shrink-0",
+            repoiRunning
+              ? "bg-slate-700 text-slate-500 cursor-not-allowed animate-pulse"
+              : "bg-purple-800/50 hover:bg-purple-700/60 border border-purple-700/50 hover:border-purple-600 text-purple-300 hover:text-purple-200"
+          )}
+        >
+          {repoiRunning ? "补充中..." : "🔧 执行"}
+        </button>
+      </div>
+
       {/* ── Step 1: 扫描 ─────────────────────────────────── */}
       <div className="bg-slate-900/60 border border-slate-700/50 rounded-xl p-5 space-y-4">
         <div className="flex items-center justify-between">
@@ -1180,33 +1205,6 @@ export default function ScanPage() {
             <p className="text-xs text-slate-500">
               将 GPS 坐标转换为城市/省份名称，用于行程命名和归档文件夹
             </p>
-          )}
-
-          {/* 补充景点 POI 按钮（地理编码完成后显示，修复旧数据 POI 缺失） */}
-          {["geocode-done", "previewing", "done"].includes(step) && (
-            <div className="flex items-center justify-between pt-1 border-t border-slate-700/30">
-              <div className="text-xs text-slate-500">
-                {repoiResult ? (
-                  <span className="text-emerald-400">
-                    ✅ 已补充 {repoiResult.updated} 个文件的景点 POI（API 调用 {repoiResult.api_calls} 次）
-                  </span>
-                ) : (
-                  <span>已有城市数据但无景点名？可尝试补充 POI</span>
-                )}
-              </div>
-              <button
-                onClick={handleRepoi}
-                disabled={repoiRunning}
-                className={clsx(
-                  "px-3 py-1 rounded-lg text-xs font-medium transition-all flex-shrink-0",
-                  repoiRunning
-                    ? "bg-slate-700 text-slate-500 cursor-not-allowed animate-pulse"
-                    : "bg-slate-700 hover:bg-purple-800/60 border border-slate-600 hover:border-purple-600/50 text-slate-400 hover:text-purple-300"
-                )}
-              >
-                {repoiRunning ? "补充中..." : "🔧 补充景点 POI"}
-              </button>
-            </div>
           )}
 
           {/* 异常文件警告 */}
