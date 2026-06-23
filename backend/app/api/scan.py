@@ -290,7 +290,7 @@ async def get_geocoded_groups(
     )
     files = result.scalars().all()
 
-    # 按 (province, city, poi) 分组计数，保留第一个 poi_type（同一分组类型相同）
+    # 按 (province, city, poi) 分组计数，保留第一个 poi_type 和坐标
     groups: dict[tuple, dict] = {}
     for f in files:
         key = (f.province or "", f.city or "", f.poi or "")
@@ -299,7 +299,9 @@ async def get_geocoded_groups(
                 "province": f.province or "",
                 "city": f.city or "",
                 "poi": f.poi or "",
-                "poi_type": getattr(f, "poi_type", "") or "",  # POI 类型（新增）
+                "poi_type": getattr(f, "poi_type", "") or "",
+                "lat": f.latitude,    # 代表性坐标（用于候选 POI 查询）
+                "lon": f.longitude,
                 "file_count": 0,
             }
         groups[key]["file_count"] += 1
@@ -383,6 +385,77 @@ async def clear_scan_data(db: AsyncSession = Depends(get_db)):
     await db.execute(delete(MediaFile))
     await db.commit()
     return {"success": True, "message": "扫描数据已清空"}
+
+
+@router.get("/scan/poi-candidates")
+async def get_poi_candidates(
+    lat: float = Query(..., description="纬度"),
+    lon: float = Query(..., description="经度"),
+    radius: int = Query(2000, ge=500, le=5000, description="搜索半径（米）"),
+):
+    """
+    根据坐标查询附近的旅行相关 POI 候选列表（方案B：按需加载）。
+
+    在 POI 审核界面用户进入编辑模式时调用，返回前5个候选供用户选择。
+    应用 T1 硬过滤（排除购物/医疗/政府等），每个候选包含名称+类型+距离。
+
+    Args:
+        lat: 纬度（WGS-84）
+        lon: 经度（WGS-84）
+        radius: 搜索半径（默认 2000m）
+
+    Returns:
+        candidates 列表，每项包含 name/type/distance
+    """
+    from app.core.config import settings
+    from app.services.geocode_service import (
+        _TRAVEL_POI_TYPES,
+        _T1_EXCLUDE_TYPE_KEYWORDS,
+    )
+
+    api_key = settings.gaode_api_key
+    if not api_key:
+        return {"success": False, "candidates": [], "error": "未配置高德 API Key"}
+
+    try:
+        import httpx
+        url = (
+            f"https://restapi.amap.com/v3/place/around"
+            f"?key={api_key}&location={lon},{lat}"
+            f"&radius={radius}&types={_TRAVEL_POI_TYPES}"
+            f"&sortby=weight&offset=10&output=json&coordsys=gps"
+        )
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(url)
+            data = resp.json()
+
+        if data.get("status") != "1":
+            return {"success": False, "candidates": [], "error": data.get("info", "API 错误")}
+
+        pois = data.get("pois", [])
+
+        # 应用 T1 硬过滤，取前5个有效候选
+        candidates = []
+        for poi in pois:
+            type_str = poi.get("type", "") or ""
+            if any(ex in type_str for ex in _T1_EXCLUDE_TYPE_KEYWORDS):
+                continue
+            name = poi.get("name", "").strip()
+            if not name:
+                continue
+            candidates.append({
+                "name": name,
+                "type": type_str,
+                "distance": poi.get("distance", "?"),
+            })
+            if len(candidates) >= 5:
+                break
+
+        return {"success": True, "candidates": candidates}
+
+    except Exception as e:
+        logger.warning(f"获取 POI 候选失败 ({lat},{lon}): {e}")
+        return {"success": False, "candidates": [], "error": str(e)}
 
 
 @router.post("/scan/geocode")
