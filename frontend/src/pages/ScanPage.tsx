@@ -998,6 +998,7 @@ export default function ScanPage() {
         {step !== "idle" && (
           <button
             onClick={handleReset}
+            title="清除当前扫描会话，回到初始状态。&#10;不影响原始文件，已生成的归档文件夹也不受影响。&#10;适合：更换源文件夹、或想完全重新整理时使用。"
             className="flex-shrink-0 text-xs text-slate-500 hover:text-slate-300 border border-slate-700 hover:border-slate-600 px-3 py-1.5 rounded-lg transition-colors"
           >
             🔄 重新开始

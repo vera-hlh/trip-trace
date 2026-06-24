@@ -231,7 +231,10 @@ export default function ArchivePage() {
   const [remarkTemplate, setRemarkTemplate] = useState(
     "地点: {province}/{city}/{township}/{poi}"
   );
+  const [deleteOriginals, setDeleteOriginals] = useState(false);  // 归档后删除原文件
   const [confirmed, setConfirmed] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false); // 确认弹窗
+  const [cleanupResult, setCleanupResult] = useState<{ deleted: number } | null>(null);
 
   // 执行状态
   const [step, setStep] = useState<PageStep>("review");
@@ -292,7 +295,7 @@ export default function ArchivePage() {
               setEvents((prev) => [...prev.slice(-500), ev]);
 
               if (ev.type === "complete") {
-                setStats({
+                const finalStats = {
                   total: ev.total || 0,
                   copied: ev.copied || 0,
                   skipped: ev.skipped || 0,
@@ -300,8 +303,26 @@ export default function ArchivePage() {
                   manualCount: ev.manual_count || 0,
                   remarksWritten: ev.remarks_written || 0,
                   outputPath: ev.output_path || outputFolderPath,
-                });
+                };
+                setStats(finalStats);
                 setStep("done");
+
+                // 若勾选了"删除原文件"且归档无错误，自动执行 cleanup
+                if (deleteOriginals && finalStats.errors === 0) {
+                  try {
+                    const cleanupRes = await fetch(`${API}/api/archive/cleanup`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ source_folder: sourceFolderPath, confirm: true }),
+                    });
+                    const cleanupData = await cleanupRes.json();
+                    if (cleanupData.success) {
+                      setCleanupResult({ deleted: cleanupData.deleted_count || 0 });
+                    }
+                  } catch (e) {
+                    console.error("Cleanup 失败:", e);
+                  }
+                }
               }
             } catch {}
           }
@@ -408,11 +429,27 @@ export default function ArchivePage() {
                 {settings.smallTripThresholdHours} 小时
               </div>
             </div>
-            <div className="bg-slate-800/60 rounded-lg p-3 col-span-2">
+            <div className="bg-slate-800/60 rounded-lg p-3 col-span-2 space-y-2">
               <div className="text-xs text-slate-500 mb-1">归档模式</div>
-              <div className="text-sm text-emerald-400 font-medium">
-                复制模式（原文件不删除）
+              <div className="flex items-center justify-between">
+                <div className={clsx("text-sm font-medium", deleteOriginals ? "text-red-400" : "text-emerald-400")}>
+                  {deleteOriginals ? "复制 + 删除原文件" : "复制模式（原文件保留）"}
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={deleteOriginals}
+                    onChange={(e) => setDeleteOriginals(e.target.checked)}
+                    className="accent-red-500 w-4 h-4"
+                  />
+                  <span className="text-xs text-slate-400">归档后删除原文件</span>
+                </label>
               </div>
+              {deleteOriginals && (
+                <p className="text-xs text-red-400/80">
+                  ⚠️ 归档完成后将删除源文件夹中的所有媒体文件，请确保归档目录已备份
+                </p>
+              )}
             </div>
           </div>
 
@@ -477,17 +514,80 @@ export default function ArchivePage() {
           </label>
 
           <button
-            onClick={handleExecute}
+            onClick={() => confirmed && setShowConfirmModal(true)}
             disabled={!confirmed}
             className={clsx(
               "w-full py-3 rounded-xl font-medium text-sm transition-all",
               confirmed
-                ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/20"
+                ? deleteOriginals
+                  ? "bg-red-700 hover:bg-red-600 text-white shadow-lg shadow-red-500/20"
+                  : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/20"
                 : "bg-slate-800 text-slate-500 cursor-not-allowed"
             )}
           >
-            🚀 开始归档
+            {deleteOriginals ? "⚠️ 开始归档（含删除原文件）" : "🚀 开始归档"}
           </button>
+        </div>
+      )}
+
+      {/* ── 确认弹窗 ─────────────────────────────────────── */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl space-y-4">
+            {deleteOriginals ? (
+              <>
+                <h3 className="text-lg font-bold text-red-400">⚠️ 危险操作确认</h3>
+                <p className="text-sm text-slate-300 leading-relaxed">
+                  归档完成后将<strong className="text-red-400">永久删除</strong>源文件夹中所有媒体文件：
+                </p>
+                <div className="text-xs text-slate-400 font-mono bg-slate-900/60 rounded-lg px-3 py-2 break-all">
+                  {sourceFolderPath}
+                </div>
+                <p className="text-xs text-red-300/80">
+                  此操作<strong>不可撤销</strong>。请确认归档输出目录已正确且可访问，再继续。
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowConfirmModal(false)}
+                    className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-all"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => { setShowConfirmModal(false); handleExecute(); }}
+                    className="flex-1 py-2 bg-red-700 hover:bg-red-600 rounded-xl text-sm text-white font-medium transition-all"
+                  >
+                    确认删除原文件
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 className="text-lg font-bold text-slate-200">📋 确认归档</h3>
+                <p className="text-sm text-slate-300 leading-relaxed">
+                  原始文件将<strong>保留</strong>在源文件夹中，归档后两份文件同时存在，
+                  会<strong>占据双倍存储空间</strong>。
+                </p>
+                <p className="text-xs text-slate-400">
+                  确认归档成功后，你可以在参数中勾选"归档后删除原文件"并重新归档，或自行手动删除。
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowConfirmModal(false)}
+                    className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm text-slate-300 transition-all"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => { setShowConfirmModal(false); handleExecute(); }}
+                    className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-sm text-white font-medium transition-all"
+                  >
+                    确认，开始归档
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -572,7 +672,21 @@ export default function ArchivePage() {
               📂 输出目录：{stats.outputPath}
             </div>
 
-            <div className="flex gap-3">
+            {/* 删除原文件结果（若已执行 cleanup）*/}
+            {deleteOriginals && (
+              <div className={clsx(
+                "mt-4 p-3 rounded-lg text-xs",
+                cleanupResult
+                  ? "bg-red-900/20 border border-red-700/40 text-red-300"
+                  : "bg-slate-800/60 border border-slate-700/40 text-slate-400 animate-pulse"
+              )}>
+                {cleanupResult
+                  ? `🗑️ 已删除原文件 ${cleanupResult.deleted} 个（源文件夹已清理）`
+                  : "⏳ 正在删除原文件..."}
+              </div>
+            )}
+
+            <div className="flex gap-3 mt-4">
               <button
                 onClick={handleOpenOutput}
                 className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium text-white transition-all"
