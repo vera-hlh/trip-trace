@@ -63,6 +63,8 @@ interface PoiGroup {
   poi_type?: string;  // POI 类型字符串（新增，来自高德 place/around）
   lat?: number;       // 代表性坐标（用于候选 POI 查询）
   lon?: number;
+  sample_path?: string;  // 代表性文件路径（用于在资源管理器中定位）
+  sample_name?: string;  // 代表性文件名（浏览器模式下可复制）
   file_count: number;
   // 本地编辑状态
   draft?: string;     // 编辑草稿
@@ -70,6 +72,7 @@ interface PoiGroup {
   saving?: boolean;
   candidates?: PoiCandidate[] | null;  // 候选 POI 列表（按需加载）
   loadingCandidates?: boolean;
+  copied?: boolean;   // 文件名复制状态（短暂显示"已复制"）
 }
 
 /** 根据 poi_type 字符串生成标签显示 */
@@ -417,18 +420,27 @@ function TripTree({
                         {/* 子行程主行 */}
                         <div className="px-4 py-2.5 flex items-center justify-between hover:bg-slate-900/50 transition-colors">
                           {/* 左侧：序号 + 图标 + 名称 + 地点 */}
-                          <div className="flex items-center gap-3 min-w-0">
+                          <div className="flex items-center gap-2 min-w-0 overflow-hidden">
                             <span className="text-slate-600 text-xs w-5 text-right font-mono flex-shrink-0">
                               {si + 1}
                             </span>
                             <span className="flex-shrink-0">📂</span>
-                            <EditableLabel
-                              value={sub.displayName || sub.folder}
-                              onSave={(name) => onRenameSub(bi, si, name)}
-                              className="text-sm text-emerald-300 hover:text-emerald-200 font-medium"
-                            />
+                            {/* #5: 合并后名称可能很长，用 max-w + truncate 限制显示 */}
+                            <div
+                              className="max-w-[220px] overflow-hidden flex-shrink-0"
+                              title={sub.displayName || sub.folder}
+                            >
+                              <EditableLabel
+                                value={sub.displayName || sub.folder}
+                                onSave={(name) => onRenameSub(bi, si, name)}
+                                className="text-sm text-emerald-300 hover:text-emerald-200 font-medium truncate block max-w-full"
+                              />
+                            </div>
                             {sub.location && (
-                              <span className="text-xs bg-slate-700/80 text-slate-300 px-2 py-0.5 rounded-full flex-shrink-0">
+                              <span
+                                title={sub.location}
+                                className="text-xs bg-slate-700/80 text-slate-300 px-2 py-0.5 rounded-full flex-shrink-0 max-w-[130px] truncate"
+                              >
                                 📍 {sub.location}
                               </span>
                             )}
@@ -1462,10 +1474,33 @@ export default function ScanPage() {
                 {/* POI 类型标签 */}
                 <PoiTypeTag poiType={group.poi_type} />
 
-                {/* 文件数 */}
-                <span className="text-xs text-slate-500 flex-shrink-0">
-                  {group.file_count} 张
-                </span>
+                {/* 文件数 + 复制文件名 */}
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <span className="text-xs text-slate-500">{group.file_count} 张</span>
+                  {group.sample_name && !group.editing && (
+                    <button
+                      onClick={() => {
+                        const electronAPI = (window as any).electronAPI;
+                        if (electronAPI?.showItemInFolder && group.sample_path) {
+                          electronAPI.showItemInFolder(group.sample_path);
+                        } else {
+                          navigator.clipboard.writeText(group.sample_name || "").then(() => {
+                            setPoiGroups((prev) =>
+                              prev.map((g, i) => i === idx ? { ...g, copied: true } : g)
+                            );
+                            setTimeout(() => setPoiGroups((prev) =>
+                              prev.map((g, i) => i === idx ? { ...g, copied: false } : g)
+                            ), 1500);
+                          });
+                        }
+                      }}
+                      title={`参考文件：${group.sample_name}\n点击复制文件名（浏览器模式），或在资源管理器中显示（Electron 模式）`}
+                      className="text-xs text-slate-600 hover:text-blue-400 transition-colors"
+                    >
+                      {group.copied ? "✅" : "📋"}
+                    </button>
+                  )}
+                </div>
 
                 {/* 操作按钮 */}
                 {group.editing && (
