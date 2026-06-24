@@ -517,7 +517,7 @@ export default function ScanPage() {
   // 扫描状态
   const [scanEvents, setScanEvents] = useState<ScanEvent[]>([]);
   const [scanStats, setScanStats] = useState<ScanStats | null>(null);
-  const [clearBeforeScan, setClearBeforeScan] = useState(false);
+  const [clearBeforeScan, setClearBeforeScan] = useState(true);  // 默认清空，确保每次处理新文件夹时数据干净
 
   // 地理编码状态
   const [geocodeResult, setGeocodeResult] = useState<{
@@ -655,8 +655,9 @@ export default function ScanPage() {
         }
 
         setStep("geocode-done");
-        // 地理编码完成后自动加载 POI 分组供审核
+        // 地理编码完成后：自动加载 POI + 自动补充景点 POI（宁多勿缺）
         await handleLoadPoiGroups();
+        await handleRepoi();  // P0 #2: 自动触发 force_repoi
       } else {
         addLog(`地理编码失败: ${JSON.stringify(data)}`);
         setStep("scan-done");
@@ -788,6 +789,10 @@ export default function ScanPage() {
               : g
           )
         );
+        // P0 #5: POI 更新后自动刷新行程预览（需要输出目录已配置）
+        if (outputFolderPath) {
+          await handlePreview();
+        }
       } else {
         addLog(`POI 更新失败: ${json.error}`);
         setPoiGroups((prev) =>
@@ -1139,12 +1144,12 @@ export default function ScanPage() {
               </label>
               <div className="ml-5 text-xs text-slate-600 leading-relaxed space-y-0.5">
                 <div>
-                  <span className="text-slate-500">✅ 勾选：</span>
-                  更换了源文件夹、或想重新整理之前的扫描结果时使用
+                  <span className="text-slate-500">✅ 勾选（推荐）：</span>
+                  处理新文件夹时使用，确保数据干净（不影响原始文件）
                 </div>
                 <div>
-                  <span className="text-slate-500">⬜ 不勾选（默认）：</span>
-                  增量扫描新照片，已有记录直接跳过，适合在原文件夹新增了照片后补扫
+                  <span className="text-slate-500">⬜ 不勾选：</span>
+                  仅在原文件夹<strong className="text-slate-500">新增了照片</strong>时使用，已有记录直接跳过省时省 API 额度
                 </div>
               </div>
             </div>
