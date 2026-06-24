@@ -290,7 +290,7 @@ async def get_geocoded_groups(
     )
     files = result.scalars().all()
 
-    # 按 (province, city, poi) 分组计数，保留第一个 poi_type 和坐标
+    # 按 (province, city, poi) 分组计数，保留第一个 poi_type/坐标/文件路径
     groups: dict[tuple, dict] = {}
     for f in files:
         key = (f.province or "", f.city or "", f.poi or "")
@@ -300,8 +300,10 @@ async def get_geocoded_groups(
                 "city": f.city or "",
                 "poi": f.poi or "",
                 "poi_type": getattr(f, "poi_type", "") or "",
-                "lat": f.latitude,    # 代表性坐标（用于候选 POI 查询）
+                "lat": f.latitude,         # 代表性坐标（用于候选 POI 查询）
                 "lon": f.longitude,
+                "sample_path": f.original_path,  # 代表性文件路径（供前端定位/复制）
+                "sample_name": f.file_name,       # 代表性文件名
                 "file_count": 0,
             }
         groups[key]["file_count"] += 1
