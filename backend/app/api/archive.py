@@ -67,6 +67,20 @@ class TripOverride(BaseModel):
     sub_overrides: list[SubTripOverride] = []
 
 
+# ── 行程重建容器模型 ──────────────────────────────────────────
+
+class ContainerItem(BaseModel):
+    """一个容器及其包含的子行程文件夹列表"""
+    container_name: str
+    sub_trip_folders: list[str]  # 原始子行程文件夹名（对应 sub_trip.trip_name）
+
+
+class BigTripContainerData(BaseModel):
+    """一个大行程的容器分组数据"""
+    big_trip_folder: str         # 原始大行程文件夹名
+    items: list[ContainerItem]   # 该大行程下的容器列表
+
+
 class ArchiveExecuteRequest(BaseModel):
     folder_path: str
     output_path: str
@@ -74,7 +88,9 @@ class ArchiveExecuteRequest(BaseModel):
     write_remarks: bool = False
     remark_template: str = "地点: {country}/{province}/{city}"
     trip_overrides: list[TripOverride] = []
-    trip_type: str = "mixed"   # "domestic" | "abroad" | "mixed"
+    trip_type: str = "mixed"          # "domestic" | "abroad" | "mixed"
+    archive_mode: str = "tree"        # "tree" | "rebuild" | "mixed"
+    containers: list[BigTripContainerData] = []  # 行程重建容器数据
 
 
 class CleanupRequest(BaseModel):
@@ -399,18 +415,44 @@ async def archive_execute(
                     if s.display_name and s.display_name != s.original_folder:
                         sub_override[(o.original_folder, s.original_folder)] = s.display_name
 
-            # 4. 应用覆盖，更新目标路径
-            for item in preview_items:
-                real_big = big_override.get(item.big_trip_folder, item.big_trip_folder)
-                real_sub = sub_override.get(
-                    (item.big_trip_folder, item.sub_trip_folder),
-                    item.sub_trip_folder
+            # 3.5 构建容器查找表（行程重建模式）
+            # key: (原始大行程文件夹名, 原始子行程文件夹名) → 容器名称
+            container_lookup: dict[tuple[str, str], str] = {}
+            if request.archive_mode in ("rebuild", "mixed") and request.containers:
+                for big_containers in request.containers:
+                    orig_big = big_containers.big_trip_folder
+                    for container_item in big_containers.items:
+                        for orig_sub in container_item.sub_trip_folders:
+                            container_lookup[(orig_big, orig_sub)] = container_item.container_name
+                logger.info(
+                    f"行程重建容器查找表已构建 ({request.archive_mode})，"
+                    f"共 {len(container_lookup)} 个子行程有容器映射"
                 )
+
+            # 4. 应用覆盖 + 容器路径，更新目标路径
+            for item in preview_items:
+                orig_big = item.big_trip_folder  # 保存原始名（容器查找用）
+                orig_sub = item.sub_trip_folder
+
+                real_big = big_override.get(orig_big, orig_big)
+                real_sub = sub_override.get((orig_big, orig_sub), orig_sub)
+
                 item.big_trip_folder = real_big
                 item.sub_trip_folder = real_sub
-                item.target_path = os.path.join(
-                    request.output_path, real_big, real_sub, item.file_name
-                )
+
+                # 行程重建：若有容器映射则插入容器目录层
+                container_name = container_lookup.get((orig_big, orig_sub))
+                if container_name:
+                    item.target_path = os.path.join(
+                        request.output_path, real_big, container_name, real_sub, item.file_name
+                    )
+                    # 在 item 上标记容器名（用于 SSE 进度显示）
+                    item._container_name = container_name  # type: ignore[attr-defined]
+                else:
+                    item.target_path = os.path.join(
+                        request.output_path, real_big, real_sub, item.file_name
+                    )
+                    item._container_name = None  # type: ignore[attr-defined]
 
             total = len(preview_items)
             yield _sse_event({

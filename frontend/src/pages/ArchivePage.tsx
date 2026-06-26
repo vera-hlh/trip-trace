@@ -10,7 +10,7 @@
  */
 import { useState } from "react";
 import { useAppStore } from "@/store/appStore";
-import type { BigTripData } from "@/store/appStore";
+import type { BigTripData, TripContainer } from "@/store/appStore";
 import clsx from "clsx";
 
 const API = "http://localhost:17890";
@@ -216,6 +216,22 @@ function TripPreview({ trips }: { trips: BigTripData[] }) {
 
 // ── 主页面 ───────────────────────────────────────────────────
 
+// ── 辅助：构建 containers 参数（行程重建模式使用）────────────
+
+function buildContainersPayload(trips: BigTripData[]) {
+  return trips
+    .filter((big) => big.containers && big.containers.length > 0)
+    .map((big) => ({
+      big_trip_folder: big.folder,
+      items: (big.containers as TripContainer[]).map((c) => ({
+        container_name: c.displayName,
+        sub_trip_folders: c.subTripIndices
+          .map((i) => big.sub_trips[i]?.folder)
+          .filter(Boolean),
+      })),
+    }));
+}
+
 export default function ArchivePage() {
   const {
     tripStructure,
@@ -223,6 +239,7 @@ export default function ArchivePage() {
     outputFolderPath,
     settings,
     tripType,
+    archiveMode,
     setCurrentPage,
   } = useAppStore();
 
@@ -273,6 +290,10 @@ export default function ArchivePage() {
           remark_template: remarkTemplate,
           trip_overrides: overrides,
           trip_type: tripType,
+          archive_mode: archiveMode ?? "tree",
+          containers: (archiveMode === "rebuild" || archiveMode === "mixed")
+            ? buildContainersPayload(tripStructure)
+            : [],
         }),
       });
 

@@ -9,6 +9,7 @@ export type AppPage =
   | "home"
   | "folder-setup"
   | "scan"
+  | "rebuilder"
   | "archive"
   | "map"
   | "history"
@@ -37,6 +38,14 @@ export interface SubTripData {
   files?: SubTripFileItem[];  // 文件列表（缩略图预览用）
 }
 
+// ── 行程重建：容器（用户自定义的额外目录层级）──────────────
+
+export interface TripContainer {
+  id: string;
+  displayName: string;       // 用户可编辑容器名称
+  subTripIndices: number[];  // 属于本容器的子行程下标（对应 BigTripData.sub_trips）
+}
+
 export interface BigTripData {
   folder: string;      // 原始文件夹名（后端生成）
   displayName: string; // 用户可编辑显示名称
@@ -44,7 +53,11 @@ export interface BigTripData {
   end_date: string | null;
   total_files: number;
   sub_trips: SubTripData[];
+  containers?: TripContainer[];  // 用户创建的容器分组（行程重建功能）
 }
+
+// ── 归档模式 ──────────────────────────────────────────────────
+export type ArchiveMode = "tree" | "rebuild" | "mixed" | null;
 
 // ── State 接口 ────────────────────────────────────────────────
 
@@ -66,10 +79,15 @@ interface AppState {
   // 行程树（持久化 - 用户可能已编辑重命名/合并）
   tripStructure: BigTripData[] | null;
   setTripStructure: (trips: BigTripData[] | null) => void;
+  updateBigTripContainers: (bigIndex: number, containers: TripContainer[]) => void;
 
   // 行程类型（持久化 - 影响地理编码策略和异常文件处理）
   tripType: "domestic" | "abroad" | "mixed";
   setTripType: (type: "domestic" | "abroad" | "mixed") => void;
+
+  // 归档模式（行程重建功能，持久化）
+  archiveMode: ArchiveMode;
+  setArchiveMode: (mode: ArchiveMode) => void;
 
   // 后端连接状态（不持久化，运行时检测）
   backendReady: boolean;
@@ -103,10 +121,22 @@ export const useAppStore = create<AppState>()(
       // 行程树
       tripStructure: null,
       setTripStructure: (trips) => set({ tripStructure: trips }),
+      updateBigTripContainers: (bigIndex, containers) =>
+        set((s) => {
+          if (!s.tripStructure) return {};
+          const updated = s.tripStructure.map((big, i) =>
+            i === bigIndex ? { ...big, containers } : big
+          );
+          return { tripStructure: updated };
+        }),
 
       // 行程类型
       tripType: "domestic" as const,
       setTripType: (type) => set({ tripType: type }),
+
+      // 归档模式
+      archiveMode: null,
+      setArchiveMode: (mode) => set({ archiveMode: mode }),
 
       // 后端状态
       backendReady: false,
@@ -120,6 +150,7 @@ export const useAppStore = create<AppState>()(
         settings: s.settings,
         tripStructure: s.tripStructure,
         tripType: s.tripType,
+        archiveMode: s.archiveMode,
       }),
     }
   )
