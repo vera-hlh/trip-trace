@@ -19,6 +19,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "home",         label: "主页",       icon: "🏠" },
   { id: "folder-setup", label: "选择文件夹", icon: "📁" },
   { id: "scan",         label: "扫描",       icon: "🔍" },
+  { id: "rebuilder",    label: "行程重建",   icon: "🔧" },
   { id: "archive",      label: "归档",       icon: "📦" },
   { id: "map",          label: "地图",       icon: "🗺️", dividerAfter: true },
   { id: "history",      label: "操作记录",   icon: "📋" },
