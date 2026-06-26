@@ -1,6 +1,6 @@
 # TripTrace 项目交接文档 - Phase 4 主体完成
 
-> 更新时间：2026-06-26（最新）
+> 更新时间：2026-06-26（最新，含行程重建功能）
 
 ---
 
@@ -126,14 +126,40 @@ foreach ($big in $data.trips_structure) {
 
 ```
 frontend/src/pages/
-├── HomePage.tsx        # 主页（后端状态+快速入口）
-├── FolderSetup.tsx     # 文件夹选择
-├── ScanPage.tsx        # 扫描+地理编码+POI审核+行程树（含缩略图预览）
-├── ArchivePage.tsx     # 归档预览+执行（含删除原文件选项）
-├── MapPage.tsx         # 行程地图
-├── HistoryPage.tsx     # 操作记录
-└── TestConsole.tsx     # 后端测试控制台
+├── HomePage.tsx           # 主页（后端状态+快速入口）
+├── FolderSetup.tsx        # 文件夹选择
+├── ScanPage.tsx           # 扫描+地理编码+POI审核+行程树（含缩略图预览）
+├── TripRebuilderPage.tsx  # 行程重建（2:1双栏）← 新增
+├── ArchivePage.tsx        # 归档预览+执行（含删除原文件选项+归档模式）
+├── MapPage.tsx            # 行程地图
+├── HistoryPage.tsx        # 操作记录
+└── TestConsole.tsx        # 后端测试控制台
 ```
+
+### 行程重建功能说明（TripRebuilderPage）
+
+用于在子行程上增加额外的"容器"目录层级，适合将同一地区多个 POI 的子行程归到一个父文件夹下。
+
+**输出结构示例**：
+```
+大行程/
+  ├─ 01_哈尔滨_0130/        ← 普通子行程（未放入容器）
+  ├─ 漠河之行/              ← 容器层（用户创建）
+  │    ├─ 05_漠河最北观景台/ ← 原子行程保留完整
+  │    └─ 06_漠河北红村/
+  └─ 09_哈尔滨中央大街_0208/
+```
+
+**三种归档模式**（必须在行程重建页选择后才能归档）：
+- 🌲 `tree`：完全按行程树，忽略容器设置
+- 📦 `rebuild`：所有子行程必须分配到容器
+- 🔀 `mixed`：容器内按容器层级，未分配按行程树
+
+**状态存储**（Zustand persist）：
+- `tripStructure[i].containers?: TripContainer[]` — 每个大行程的容器分组
+- `archiveMode: "tree" | "rebuild" | "mixed" | null` — 归档模式
+
+**操作流程**：勾选左侧子行程 → 右侧「移入容器▼」→ 选现有容器或新建 → 选择归档模式 → 前往归档
 
 ---
 
@@ -161,7 +187,8 @@ frontend/src/pages/
 ### Phase 4 P2（进行中）
 - [ ] UI 体验打磨（空状态、加载动画等）
 - [ ] 归档重入保护（目标目录已存在同名文件夹时提示）
-- [ ] **行程重建功能**：设计方案基本确定，UI 布局落实中（见下一对话）
+- [x] **行程重建功能**：TripRebuilderPage 已实现（2:1布局+容器管理+三种归档模式）
+- [ ] **行程重建测试**：用真实数据验证容器路径生成（big/container/sub/file）
 
 ### 待验证
 - [ ] 用新版代码（2000m半径+township+force_repoi）重跑东北测试集，验证：
@@ -177,14 +204,16 @@ frontend/src/pages/
 我在开发名为"旅迹 TripTrace"的 Windows 桌面照片归档工具。
 项目在 C:\Dev\trip-trace，GitHub: https://github.com/vera-hlh/trip-trace。
 
-Phase 1~4（P0+P1）已完成，详情见 docs/handoff-phase3.md。
-最新 commit: feat: #1 POI审核加复制文件名按钮; #5 合并行程名截断+tooltip显示
+Phase 1~4（P0+P1+行程重建）已完成，详情见 docs/handoff-phase3.md。
+最新 commit: feat: 行程重建功能（TripRebuilderPage）+ 归档模式选择（tree/rebuild/mixed）
 
 当前待做：
-- Phase 4 P2：行程重建功能（设计方案基本确定，UI布局落实中）
-  请参考上一对话的方案设计继续实现
+- Phase 4 P2 收尾：行程重建功能测试（验证 rebuild/mixed 模式容器路径生成）
+- UI 体验打磨（空状态、加载动画）
+- 归档重入保护
 
 启动环境：
   后端：cd backend && .venv\Scripts\python.exe uvicorn_config.py
   前端：cd frontend && npm run dev:renderer → http://localhost:5173/
+  PS执行策略（首次）：Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
