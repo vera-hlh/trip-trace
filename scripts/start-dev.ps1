@@ -1,5 +1,6 @@
 # TripTrace 开发环境一键启动脚本
 # 使用方式：在 PowerShell 中运行 .\scripts\start-dev.ps1
+# 如遇"无法加载脚本"，先运行：Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 $root = Split-Path $PSScriptRoot -Parent
 
@@ -40,10 +41,12 @@ if ($health -eq 200) {
 # ── 启动前端 ────────────────────────────────────────────────
 
 Write-Host "🌐 启动前端 (http://localhost:5173)..." -ForegroundColor Yellow
-Write-Host "   测试控制台: http://localhost:5173/test" -ForegroundColor Cyan
 
-# 在独立 PowerShell 窗口中启动前端（可见错误输出）
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root\frontend'; npm run dev:renderer" -WindowStyle Normal
+# 用 pwsh（PowerShell 7）在独立窗口中启动前端（可见错误输出）
+$pwshExe = (Get-Command pwsh -ErrorAction SilentlyContinue)?.Source
+if (-not $pwshExe) { $pwshExe = "pwsh" }
+
+Start-Process $pwshExe -ArgumentList "-NoExit", "-Command", "cd '$root\frontend'; npm run dev:renderer" -WindowStyle Normal
 
 Start-Sleep -Seconds 5
 
@@ -52,11 +55,12 @@ $frontendOk = try { (Invoke-WebRequest -Uri "http://localhost:5173" -TimeoutSec 
 if ($frontendOk -eq 200) {
     Write-Host "✅ 前端启动成功" -ForegroundColor Green
 } else {
-    Write-Host "⚠️  前端可能还在启动中，请稍等..." -ForegroundColor Yellow
+    Write-Host "⚠️  前端可能还在启动中，请稍等约10秒再访问..." -ForegroundColor Yellow
     Write-Host "   如遇错误，请查看新打开的 PowerShell 窗口" -ForegroundColor Yellow
 }
 
 Write-Host ""
 Write-Host "✅ 开发环境启动完成！" -ForegroundColor Green
-Write-Host "   📌 测试控制台: http://localhost:5173/test" -ForegroundColor White
-Write-Host "   💡 提示：访问 /test 后，页面固定在测试控制台（Zustand 状态）" -ForegroundColor DarkGray
+Write-Host "   📌 前端地址: http://localhost:5173" -ForegroundColor White
+Write-Host "   🔧 测试控制台: 通过侧边栏「测试控制台」进入（非URL路由）" -ForegroundColor DarkGray
+Write-Host "   💡 如遇脚本无法运行: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser" -ForegroundColor DarkGray
