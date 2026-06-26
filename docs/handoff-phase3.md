@@ -1,6 +1,6 @@
-# TripTrace 项目交接文档 - Phase 3+4 完成
+# TripTrace 项目交接文档 - Phase 4 主体完成
 
-> 更新时间：2026-06-18（最新）
+> 更新时间：2026-06-26（最新）
 
 ---
 
@@ -28,7 +28,7 @@
 | **2000m 搜索半径** | ✅ | 从 1000m 扩大到 2000m，适应地广人稀地区 |
 | POI 审核 UI | ✅ | 地理编码后自动加载可编辑 POI 分组 |
 
-### ✅ Phase 4 功能强化
+### ✅ Phase 4 功能强化（P0+P1 全部完成）
 
 | 功能 | 状态 | 说明 |
 |---|---|---|
@@ -39,45 +39,17 @@
 | 操作记录页面（HistoryPage）| ✅ | 侧边栏「📋 操作记录」 |
 | **best_location_label** | ✅ | 归档命名优先级：POI > 乡镇 > 区县 > 城市 |
 | **子行程命名改进** | ✅ | 单日：`01_北极镇_0201`；多日：`05_延边_0205-0206` |
+| **大行程命名新格式** | ✅ | `{year}_{省市}_{天数}天_{MMDD}-{MMDD}`（智能省市拼接+截断） |
 | **备注模板更新** | ✅ | 默认：`地点: {province}/{city}/{township}/{poi}` |
 | GPS-less 文件时间推断 | ✅ | ±2h内有GPS文件则自动推断位置 |
+| 国内/境外/混合行程类型 | ✅ | 选择类型 + 异常文件路由到 `_待手动整理/` |
+| 子行程缩略图预览 | ✅ | Grid 4列预览 + 在资源管理器中显示 |
+| POI 候选列表 | ✅ | 点击编辑时显示附近5个候选（一键选择） |
+| POI 类型标签 | ✅ | 风景名胜/热点地标/自然地名/公园/文化场馆/火车站 等 |
+| force_repoi 补充 POI | ✅ | 独立工具栏始终可见，自动在地理编码后触发 |
+| 归档后删除原文件 | ✅ | 复选框 + 二次确认弹窗 + 自动 cleanup |
+| POI 审核复制文件名 | ✅ | 浏览器模式下可复制代表性文件名 |
 | mutagen + httpx 安装 | ✅ | 视频时间戳 + 高德API 依赖 |
-
----
-
-## ⚠️ 待验证问题（上次测试被中断）
-
-### 1. POI 地址精确度（需重新测试验证效果）
-
-上次因超时中断，**地理编码还未用新版代码（2000m半径+township）跑过**。需要：
-1. 清空旧数据：`DELETE /api/scan/clear`
-2. 重新扫描：`POST /api/scan`
-3. 重新地理编码：`POST /api/scan/geocode`（**单独运行，等60秒**）
-4. 查看归档预览：`POST /api/archive/preview`
-
-期望改进效果对照（用户提供的期望）：
-- `IMG_20250201_115322/120328` → **漠河站**（新加 150200 火车站类型）
-- `IMG_20250201_143440` → 漠河市 **北极镇**（新加 township 字段）
-- `IMG_20250202_111804` → **龙江第一湾风景区**（110200 风景名胜，2000m半径）
-
-### 2. 大行程文件夹命名（✅ 已实现）
-
-新格式：`{年份}_{省份+城市}_{天数}天_{MMDD}-{MMDD}`
-
-例：
-- `2025_黑龙江大兴安岭漠河·吉林延边_10天_0130-0208`（跨省）
-- `2025_黑龙江大兴安岭漠河_10天_0130-0208`（单省多城市）
-- `2025_云南昆明_1天_0501`（单日）
-- `2025_日本東京大阪_3天_0401-0403`（境外）
-- `2025_东北雪乡_10天_0130-0208`（用户自定义名称，追加日期）
-
-**实现细节**：
-- `BigTrip._get_location_summary()` 从所有子行程 items 收集 `(country, province, city)` 三元组（去重保序）
-- `_shorten_place_name()` 模块级辅助函数去掉行政后缀（省/市/地区/族自治州等）
-- 国内：同省城市直接拼接，不同省用 `·` 分隔，每省最多显示2城市
-- 境外：国家+城市拼接，不同国用 `·` 分隔
-- 超长截断（>20字符）
-- 无GPS数据回退为"旅行"
 
 ---
 
@@ -93,7 +65,10 @@ cd C:\Dev\trip-trace\frontend
 npm run dev:renderer   # http://localhost:5173/
 ```
 
-**注意**：每次重启后端后，先等待 `Application startup complete.` 再操作。
+**注意**：
+- 每次重启后端后，先等待 `Application startup complete.` 再操作
+- 前端若提示「后端服务未连接」是**正常**的，需要先启动后端
+- `npm run dev:renderer` = 只启 Vite+React（不启 Electron），浏览器直接访问即可调试
 
 ---
 
@@ -134,11 +109,13 @@ foreach ($big in $data.trips_structure) {
 | GET | /health | 健康检查 |
 | POST | /api/scan | 扫描文件夹（SSE）|
 | DELETE | /api/scan/clear | 清空扫描数据 |
-| POST | /api/scan/geocode | 逆地理编码（含高德 township+POI）|
+| POST | /api/scan/geocode | 逆地理编码（含高德 township+POI；force_repoi=true 可补充 POI）|
 | GET | /api/scan/geocoded | POI 分组汇总（审核用）|
+| GET | /api/scan/poi-candidates | 按坐标查附近候选 POI（lat/lon 参数）|
 | PUT | /api/scan/poi-group | 批量更新 POI 名称 |
 | POST | /api/archive/preview | 归档预览 |
 | POST | /api/archive/execute | 执行归档（SSE+写日志+生成trip_log.md）|
+| POST | /api/archive/cleanup | 删除源文件（confirm=true 才执行）|
 | GET | /api/archive/logs | 操作记录列表 |
 | GET | /api/map/html | Folium 地图 HTML |
 | GET | /api/media/thumbnail | 缩略图 |
@@ -151,10 +128,10 @@ foreach ($big in $data.trips_structure) {
 frontend/src/pages/
 ├── HomePage.tsx        # 主页（后端状态+快速入口）
 ├── FolderSetup.tsx     # 文件夹选择
-├── ScanPage.tsx        # 扫描+地理编码+POI审核+行程树
-├── ArchivePage.tsx     # 归档预览+执行
+├── ScanPage.tsx        # 扫描+地理编码+POI审核+行程树（含缩略图预览）
+├── ArchivePage.tsx     # 归档预览+执行（含删除原文件选项）
 ├── MapPage.tsx         # 行程地图
-├── HistoryPage.tsx     # 操作记录 ← 新增
+├── HistoryPage.tsx     # 操作记录
 └── TestConsole.tsx     # 后端测试控制台
 ```
 
@@ -175,17 +152,22 @@ frontend/src/pages/
 - **geocode 跳过逻辑**：`city IS NULL` → 跳过（有city=已处理过，有没有POI都不重复调用）
 - **GPS 推断**：±2h 内有 GPS 文件 → 自动推断位置（但不写入 GPS 坐标）
 - **双层地点策略**：`addressComponent.township`（行政精确）+ POI 搜索（景点名），合并使用
+- **行程树状态管理**：Zustand persist（路径/设置/行程树），行程树用户编辑后跨页面保持
 
 ---
 
 ## 待完成任务
 
-### P0（已完成）
-- [x] **大行程文件夹命名**：已改为 `{year}_{province+city}_{days}天_{MMDD}-{MMDD}` 格式
-
-### P1（近期）
-- [ ] 验证新地理编码效果（重跑测试，看漠河站/北极镇是否正确识别）
+### Phase 4 P2（进行中）
 - [ ] UI 体验打磨（空状态、加载动画等）
+- [ ] 归档重入保护（目标目录已存在同名文件夹时提示）
+- [ ] **行程重建功能**：设计方案基本确定，UI 布局落实中（见下一对话）
+
+### 待验证
+- [ ] 用新版代码（2000m半径+township+force_repoi）重跑东北测试集，验证：
+  - `IMG_20250201_115322` → **漠河站**（火车站类型）
+  - `IMG_20250201_143440` → **北极镇**（township字段）
+  - `IMG_20250202_111804` → **龙江第一湾风景区**（2000m半径）
 
 ---
 
@@ -195,10 +177,14 @@ frontend/src/pages/
 我在开发名为"旅迹 TripTrace"的 Windows 桌面照片归档工具。
 项目在 C:\Dev\trip-trace，GitHub: https://github.com/vera-hlh/trip-trace。
 
-Phase 1~4 已完成，详情见 docs/handoff-phase3.md。
-最新 commit: feat: 大行程文件夹新命名格式（{year}_{省市}_{天数}天_{MMDD}-{MMDD}）
+Phase 1~4（P0+P1）已完成，详情见 docs/handoff-phase3.md。
+最新 commit: feat: #1 POI审核加复制文件名按钮; #5 合并行程名截断+tooltip显示
 
 当前待做：
-- 验证新地理编码效果（重跑测试，看漠河站/北极镇是否正确识别）
-  测试步骤见 handoff-phase3.md「测试步骤」章节（分步执行避免超时）
+- Phase 4 P2：行程重建功能（设计方案基本确定，UI布局落实中）
+  请参考上一对话的方案设计继续实现
+
+启动环境：
+  后端：cd backend && .venv\Scripts\python.exe uvicorn_config.py
+  前端：cd frontend && npm run dev:renderer → http://localhost:5173/
 ```

@@ -91,6 +91,15 @@ npm run dev
 
 ## 开发状态
 
-🚧 **当前阶段**: Phase 1 - 项目初始化
+🔄 **当前阶段**: Phase 4 - 功能强化（v0.8.0 进行中）
 
-详见 [开发路线图](docs/roadmap.md)
+| Phase | 内容 | 状态 |
+|---|---|---|
+| Phase 1 | 项目初始化 | ✅ 完成 |
+| Phase 2 | 后端核心模块（90/90 测试）| ✅ 完成 |
+| Phase 3 | 前端界面 + 高德 POI 集成 | ✅ 完成 |
+| Phase 4 | 功能强化（UI 打磨/POI审核/行程命名）| 🔄 进行中 |
+| Phase 5 | 多用户 SaaS | ⏸️ 等待触发条件 |
+| Phase 6 | 视频生成模块 | 📋 待规划 |
+
+详见 [开发路线图](docs/roadmap.md) 和 [交接文档](docs/handoff-phase3.md)
