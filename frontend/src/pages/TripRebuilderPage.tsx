@@ -136,7 +136,7 @@ const MODE_CONFIG: Record<
   },
   rebuild: {
     icon: "📦",
-    label: "重建",
+    label: "重建行程",
     desc: "所有子行程必须分配到容器",
     color: "border-amber-600 bg-amber-900/30 text-amber-300",
   },
@@ -369,47 +369,18 @@ export default function TripRebuilderPage() {
   return (
     <div className="p-5 max-w-5xl mx-auto">
       {/* 页头 */}
-      <div className="flex items-center justify-between mb-5">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-100">🔧 行程重建</h1>
-          <p className="text-xs text-slate-400 mt-0.5">
-            将子行程分组到容器中，生成额外目录层级（可选）
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setCurrentPage("scan")}
-            className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-500 rounded-xl transition-colors"
-          >
-            ← 返回扫描
-          </button>
-          <button
-            onClick={() => setCurrentPage("archive")}
-            disabled={!canProceed}
-            title={
-              archiveMode === null
-                ? "请先在右侧选择归档模式"
-                : archiveMode === "rebuild" && totalUnassigned() > 0
-                ? `重建模式需所有子行程分配到容器（还有 ${totalUnassigned()} 个未分配）`
-                : ""
-            }
-            className={clsx(
-              "px-5 py-2 text-sm font-medium rounded-xl transition-all",
-              canProceed
-                ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/20"
-                : "bg-slate-800 text-slate-500 cursor-not-allowed"
-            )}
-          >
-            前往归档 →
-          </button>
-        </div>
+      <div className="mb-5">
+        <h1 className="text-2xl font-bold text-slate-100">🔧 行程重建</h1>
+        <p className="text-xs text-slate-400 mt-0.5">
+          将子行程分组到容器中，生成额外目录层级（可选）· 右侧选择归档模式后前往归档
+        </p>
       </div>
 
-      {/* 2:1 双栏主体 */}
-      <div className="grid grid-cols-3 gap-4 items-start">
+      {/* 3:1 双栏主体 */}
+      <div className="grid grid-cols-4 gap-4 items-start">
 
-        {/* ── 左侧：行程树（2/3） ─────────────────────────── */}
-        <div className="col-span-2 space-y-3">
+        {/* ── 左侧：行程树（3/4）─────────────────────────── */}
+        <div className="col-span-3 space-y-3">
           {tripStructure.map((big, bi) => {
             const isCollapsed = collapsed.has(bi);
             const assignedMap = getAssignedMap(bi);
@@ -765,7 +736,7 @@ export default function TripRebuilderPage() {
 
           </div>
 
-          {/* 重建状态摘要 */}
+          {/* 归档预览摘要 */}
           <div className="bg-slate-900/40 border border-slate-700/30 rounded-xl p-3 space-y-1.5 text-xs">
             <div className="text-slate-400 font-medium mb-1">归档预览</div>
             {tripStructure.map((big, bi) => {
@@ -789,6 +760,35 @@ export default function TripRebuilderPage() {
                 </div>
               );
             })}
+          </div>
+
+          {/* 导航按钮（上一步/下一步）*/}
+          <div className="space-y-2 pb-2">
+            <button
+              onClick={() => setCurrentPage("archive")}
+              disabled={!canProceed}
+              title={
+                archiveMode === null
+                  ? "请先在上方选择归档模式"
+                  : archiveMode === "rebuild" && totalUnassigned() > 0
+                  ? `重建行程模式需所有子行程分配到容器（还有 ${totalUnassigned()} 个未分配）`
+                  : "前往归档"
+              }
+              className={clsx(
+                "w-full py-2.5 rounded-xl text-sm font-medium transition-all",
+                canProceed
+                  ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/20"
+                  : "bg-slate-800 text-slate-500 cursor-not-allowed"
+              )}
+            >
+              📦 下一步：归档 →
+            </button>
+            <button
+              onClick={() => setCurrentPage("scan")}
+              className="w-full py-2 rounded-xl text-xs text-slate-500 hover:text-slate-300 border border-slate-700/50 hover:border-slate-600 transition-colors"
+            >
+              ← 上一步：扫描
+            </button>
           </div>
 
         </div>

@@ -73,6 +73,8 @@ interface PoiGroup {
   candidates?: PoiCandidate[] | null;  // 候选 POI 列表（按需加载）
   loadingCandidates?: boolean;
   copied?: boolean;   // 文件名复制状态（短暂显示"已复制"）
+  files?: Array<{ path: string; name: string }>;  // 该组所有文件（最多6个，缩略图用）
+  thumbsOpen?: boolean;  // 是否展开缩略图
 }
 
 /** 根据 poi_type 字符串生成标签显示 */
@@ -470,22 +472,6 @@ function TripTree({
                               {isPreviewOpen ? "🙈 收起" : "🖼️ 预览"}
                             </button>
 
-                            {/* 合并按钮 */}
-                            {si < big.sub_trips.length - 1 && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onMergeSub(bi, si);
-                                }}
-                                title={`与下一子行程「${
-                                  big.sub_trips[si + 1].displayName ||
-                                  big.sub_trips[si + 1].folder
-                                }」合并`}
-                                className="px-2 py-0.5 bg-slate-700 hover:bg-amber-800/50 border border-slate-600 hover:border-amber-600/60 rounded text-slate-400 hover:text-amber-300 transition-colors"
-                              >
-                                合并↓
-                              </button>
-                            )}
                           </div>
                         </div>
 
@@ -987,7 +973,7 @@ export default function ScanPage() {
   // ── 渲染 ───────────────────────────────────────────────────
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-5">
+    <div className="p-6 max-w-6xl mx-auto space-y-5">
       {/* 页头 */}
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -1340,7 +1326,7 @@ export default function ScanPage() {
                 📍 POI 审核（可选）
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                高德识别到的景点地名，可手动修改后用于归档备注和文件夹命名
+                修改后直接影响子行程<strong className="text-slate-400">文件夹命名</strong>（如「01_北极镇_0201」）和备注写入；POI 本身不产生文件夹，文件夹在归档时生成
               </p>
             </div>
             <button
@@ -1353,12 +1339,13 @@ export default function ScanPage() {
           </div>
 
           {/* 分组列表 */}
-          <div className="space-y-1 max-h-64 overflow-y-auto">
+          <div className="space-y-1 max-h-96 overflow-y-auto">
             {poiGroups.map((group, idx) => (
               <div
                 key={idx}
-                className="flex items-center gap-3 px-3 py-2 bg-slate-800/50 rounded-lg text-sm"
+                className="bg-slate-800/50 rounded-lg overflow-hidden"
               >
+              <div className="flex items-center gap-3 px-3 py-2 text-sm">
                 {/* 城市 */}
                 <span className="text-slate-300 font-medium min-w-[5rem] flex-shrink-0">
                   {group.city}
@@ -1528,7 +1515,54 @@ export default function ScanPage() {
                     </button>
                   </div>
                 )}
+
+                {/* 缩略图展开按钮 */}
+                {group.files && group.files.length > 0 && !group.editing && (
+                  <button
+                    onClick={() => setPoiGroups((prev) =>
+                      prev.map((g, i) => i === idx ? { ...g, thumbsOpen: !g.thumbsOpen } : g)
+                    )}
+                    title={group.thumbsOpen ? "收起缩略图" : "展开查看该组文件缩略图"}
+                    className={clsx(
+                      "text-xs px-1.5 py-0.5 border rounded transition-colors flex-shrink-0",
+                      group.thumbsOpen
+                        ? "bg-blue-900/40 border-blue-700/50 text-blue-400"
+                        : "bg-slate-700/50 border-slate-600 text-slate-500 hover:text-slate-300"
+                    )}
+                  >
+                    🖼️
+                  </button>
+                )}
               </div>
+
+              {/* 缩略图展开区 */}
+              {group.thumbsOpen && group.files && group.files.length > 0 && (
+                <div className="px-3 pb-3 pt-1 border-t border-slate-700/30">
+                  <div className="grid grid-cols-6 gap-1.5 mt-1">
+                    {group.files.map((f, fi) => (
+                      <div key={fi} className="space-y-0.5">
+                        <div className="aspect-square bg-slate-900 rounded overflow-hidden border border-slate-700/40">
+                          <img
+                            src={`${API}/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=80&quality=60`}
+                            alt={f.name}
+                            loading="lazy"
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).style.display = "none";
+                              const p = e.currentTarget.parentElement;
+                              if (p) p.innerHTML = `<div class="w-full h-full flex items-center justify-center text-slate-600 text-xs">🎬</div>`;
+                            }}
+                          />
+                        </div>
+                        <p className="text-xs text-slate-600 truncate leading-tight" title={f.name}>
+                          {f.name}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
             ))}
           </div>
 
@@ -1599,24 +1633,16 @@ export default function ScanPage() {
       {/* ── 行程树 ────────────────────────────────────────── */}
       {step === "done" && tripStructure && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-300">
-                🗂️ 行程树{" "}
-                <span className="text-slate-500 font-normal">
-                  （{tripStructure.length} 大行程）
-                </span>
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                点击名称可重命名 · 点击「合并↓」可合并相邻子行程
-              </p>
-            </div>
-            <button
-              onClick={() => setCurrentPage("archive")}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium text-white shadow-lg shadow-blue-500/20 transition-all"
-            >
-              📦 下一步：归档 →
-            </button>
+          <div>
+            <h2 className="text-sm font-semibold text-slate-300">
+              🗂️ 行程树{" "}
+              <span className="text-slate-500 font-normal">
+                （{tripStructure.length} 大行程）
+              </span>
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              点击名称可重命名 · 若需重组行程结构请前往「行程重建」
+            </p>
           </div>
 
           <TripTree
@@ -1625,6 +1651,16 @@ export default function ScanPage() {
             onRenameSub={handleRenameSub}
             onMergeSub={handleMergeSub}
           />
+
+          {/* 下一步按钮：在行程树下方，用户看完行程树后自然点击 */}
+          <div className="flex justify-end pt-2">
+            <button
+              onClick={() => setCurrentPage("rebuilder")}
+              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-sm font-medium text-white shadow-lg shadow-emerald-500/20 transition-all"
+            >
+              🔧 下一步：行程重建 →
+            </button>
+          </div>
         </div>
       )}
 

@@ -304,8 +304,15 @@ async def get_geocoded_groups(
                 "lon": f.longitude,
                 "sample_path": f.original_path,  # 代表性文件路径（供前端定位/复制）
                 "sample_name": f.file_name,       # 代表性文件名
+                "files": [],               # 该组文件列表（最多6个，供缩略图预览）
                 "file_count": 0,
             }
+        # 最多收集6个文件路径用于缩略图预览
+        if len(groups[key]["files"]) < 6:
+            groups[key]["files"].append({
+                "path": f.original_path,
+                "name": f.file_name,
+            })
         groups[key]["file_count"] += 1
 
     # 按省份 → 城市 → POI 排序
