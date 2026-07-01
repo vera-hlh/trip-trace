@@ -171,7 +171,7 @@ function PhotoSidebar({
 // ── 主页面 ───────────────────────────────────────────────────
 
 export default function MapPage() {
-  const { sourceFolderPath, setCurrentPage } = useAppStore();
+  const { sourceFolderPath, outputFolderPath, setCurrentPage } = useAppStore();
 
   const [mapHtml, setMapHtml] = useState<string>("");
   const [mapLoading, setMapLoading] = useState(true);
@@ -274,6 +274,22 @@ export default function MapPage() {
           >
             {mapLoading ? "⏳ 加载中..." : "🔄 刷新地图"}
           </button>
+          {outputFolderPath && (
+            <button
+              onClick={() => {
+                const electronAPI = (window as any).electronAPI;
+                if (electronAPI?.openPath) {
+                  electronAPI.openPath(outputFolderPath);
+                } else {
+                  alert(`归档输出目录：\n${outputFolderPath}`);
+                }
+              }}
+              title={`打开归档目录：${outputFolderPath}`}
+              className="text-xs text-slate-400 hover:text-emerald-400 border border-slate-700 hover:border-emerald-700/50 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              📂 打开归档目录
+            </button>
+          )}
           <button
             onClick={() => setCurrentPage("archive")}
             className="text-xs text-slate-500 hover:text-slate-300 px-3 py-1.5 transition-colors"
