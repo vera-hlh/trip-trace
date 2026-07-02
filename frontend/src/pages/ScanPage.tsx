@@ -1327,6 +1327,7 @@ export default function ScanPage() {
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
                 修改后直接影响子行程<strong className="text-slate-400">文件夹命名</strong>（如「01_北极镇_0201」）和备注写入；POI 本身不产生文件夹，文件夹在归档时生成
+                <span className="ml-1 text-slate-600">· 排序：省市→POI 字母顺序</span>
               </p>
             </div>
             <button
@@ -1346,6 +1347,10 @@ export default function ScanPage() {
                 className="bg-slate-800/50 rounded-lg overflow-hidden"
               >
               <div className="flex items-center gap-3 px-3 py-2 text-sm">
+                {/* 序号 */}
+                <span className="text-slate-600 text-xs font-mono w-5 text-right flex-shrink-0">
+                  {idx + 1}
+                </span>
                 {/* 城市 */}
                 <span className="text-slate-300 font-medium min-w-[5rem] flex-shrink-0">
                   {group.city}
@@ -1543,7 +1548,7 @@ export default function ScanPage() {
                       <div key={fi} className="space-y-0.5">
                         <div className="aspect-square bg-slate-900 rounded overflow-hidden border border-slate-700/40">
                           <img
-                            src={`${API}/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=80&quality=60`}
+                            src={`${API}/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=120&quality=75`}
                             alt={f.name}
                             loading="lazy"
                             className="w-full h-full object-cover"
@@ -1641,7 +1646,7 @@ export default function ScanPage() {
               </span>
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              点击名称可重命名 · 若需重组行程结构请前往「行程重建」
+              按拍摄时间排序 · 点击名称可重命名 · 若需重组行程请前往「行程重建」
             </p>
           </div>
 
