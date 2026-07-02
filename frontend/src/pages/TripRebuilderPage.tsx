@@ -18,7 +18,7 @@
  */
 import { useState, useRef, useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
-import type { TripContainer, ArchiveMode } from "@/store/appStore";
+import type { TripContainer, ArchiveMode, BigTripData } from "@/store/appStore";
 import clsx from "clsx";
 
 const API = "http://localhost:17890";
@@ -192,6 +192,7 @@ function ModeSelector({
 export default function TripRebuilderPage() {
   const {
     tripStructure,
+    setTripStructure,
     archiveMode,
     setArchiveMode,
     updateBigTripContainers,
@@ -360,6 +361,47 @@ export default function TripRebuilderPage() {
       return next;
     });
 
+  // ── 大行程合并 ─────────────────────────────────────────────
+
+  const [mergeSrcIdx, setMergeSrcIdx] = useState<number>(1);  // 默认选第二个（常见为"待分类"）
+  const [mergeTgtIdx, setMergeTgtIdx] = useState<number>(0);  // 默认合并进第一个
+  const [showMergeConfirm, setShowMergeConfirm] = useState(false);
+
+  const handleMergeBigTrips = () => {
+    if (!tripStructure || mergeSrcIdx === mergeTgtIdx) return;
+    const source = tripStructure[mergeSrcIdx];
+    const target = tripStructure[mergeTgtIdx];
+
+    // 将源大行程的子行程追加到目标大行程
+    const mergedTarget: BigTripData = {
+      ...target,
+      total_files: target.total_files + source.total_files,
+      sub_trips: [
+        ...target.sub_trips,
+        // 源子行程继续追加，序号在 TripTree 里会自动重新显示
+        ...source.sub_trips,
+      ],
+    };
+
+    const newStructure = tripStructure
+      .map((big, i) => (i === mergeTgtIdx ? mergedTarget : big))
+      .filter((_, i) => i !== mergeSrcIdx);
+
+    setTripStructure(newStructure);
+
+    // 更新 activeBigIdx（源消失后下标可能变化）
+    if (activeBigIdx === mergeSrcIdx) {
+      setActiveBigIdx(mergeTgtIdx < mergeSrcIdx ? mergeTgtIdx : Math.max(0, mergeTgtIdx - 1));
+    } else if (activeBigIdx > mergeSrcIdx) {
+      setActiveBigIdx(activeBigIdx - 1);
+    }
+
+    // 重置合并选择器
+    setShowMergeConfirm(false);
+    setMergeSrcIdx(1);
+    setMergeTgtIdx(0);
+  };
+
   // 验证能否前往归档
   const canProceed = archiveMode !== null &&
     (archiveMode !== "rebuild" || totalUnassigned() === 0);
@@ -381,6 +423,93 @@ export default function TripRebuilderPage() {
 
         {/* ── 左侧：行程树（3/4）─────────────────────────── */}
         <div className="col-span-3 space-y-3">
+
+          {/* 大行程合并（仅多大行程时显示）*/}
+          {tripStructure.length > 1 && (
+            <div className="bg-slate-900/60 border border-orange-700/30 rounded-xl p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-base">🔀</span>
+                <div>
+                  <div className="text-xs font-semibold text-orange-300">大行程合并</div>
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    将一个大行程的所有子行程迁入另一个大行程（适用于无元数据照片被单独归组的情况）
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-slate-500 mb-1">将</div>
+                  <select
+                    value={mergeSrcIdx}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setMergeSrcIdx(v);
+                      if (v === mergeTgtIdx) setMergeTgtIdx(v === 0 ? 1 : 0);
+                    }}
+                    className="w-full text-xs bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-slate-300 outline-none"
+                  >
+                    {tripStructure.map((big, i) => (
+                      <option key={i} value={i}>
+                        {(big.displayName || big.folder).slice(0, 20)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="text-slate-500 text-xs mt-4 flex-shrink-0">→ 合并入</div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-slate-500 mb-1">目标</div>
+                  <select
+                    value={mergeTgtIdx}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setMergeTgtIdx(v);
+                      if (v === mergeSrcIdx) setMergeSrcIdx(v === 0 ? 1 : 0);
+                    }}
+                    className="w-full text-xs bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-slate-300 outline-none"
+                  >
+                    {tripStructure.map((big, i) => (
+                      <option key={i} value={i}>
+                        {(big.displayName || big.folder).slice(0, 20)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {mergeSrcIdx !== mergeTgtIdx && !showMergeConfirm && (
+                <button
+                  onClick={() => setShowMergeConfirm(true)}
+                  className="w-full text-xs py-2 bg-orange-900/30 hover:bg-orange-800/40 border border-orange-700/40 text-orange-300 rounded-lg transition-colors"
+                >
+                  执行合并 →
+                </button>
+              )}
+              {showMergeConfirm && (
+                <div className="bg-orange-900/20 border border-orange-700/40 rounded-lg p-3 space-y-2">
+                  <p className="text-xs text-orange-300 leading-relaxed">
+                    确认将「{(tripStructure[mergeSrcIdx]?.displayName || tripStructure[mergeSrcIdx]?.folder || "").slice(0, 20)}」的{" "}
+                    <strong>{tripStructure[mergeSrcIdx]?.sub_trips.length}</strong>{" "}
+                    个子行程追加到「{(tripStructure[mergeTgtIdx]?.displayName || tripStructure[mergeTgtIdx]?.folder || "").slice(0, 20)}」？
+                    <span className="text-slate-400 ml-1">（此操作不可撤销，但可重新生成行程预览）</span>
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowMergeConfirm(false)}
+                      className="flex-1 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors"
+                    >
+                      取消
+                    </button>
+                    <button
+                      onClick={handleMergeBigTrips}
+                      className="flex-1 py-1.5 text-xs bg-orange-700 hover:bg-orange-600 text-white rounded-lg transition-colors font-medium"
+                    >
+                      确认合并
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {tripStructure.map((big, bi) => {
             const isCollapsed = collapsed.has(bi);
             const assignedMap = getAssignedMap(bi);
