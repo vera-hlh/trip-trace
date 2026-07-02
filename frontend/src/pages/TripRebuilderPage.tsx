@@ -561,8 +561,8 @@ export default function TripRebuilderPage() {
           <div className="bg-slate-900/60 border border-slate-700/50 rounded-xl p-4 space-y-3">
 
             {/* 面板标题 + 大行程切换 */}
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-xs font-semibold text-slate-300">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="text-xs font-semibold text-slate-300 whitespace-nowrap flex-shrink-0">
                 📦 容器管理
               </div>
               {/* 多大行程时显示切换器 */}
@@ -573,11 +573,11 @@ export default function TripRebuilderPage() {
                     setActiveBigIdx(Number(e.target.value));
                     setSelectedSubs([]);
                   }}
-                  className="text-xs bg-slate-800 border border-slate-600 rounded px-1.5 py-0.5 text-slate-300 outline-none"
+                  className="text-xs bg-slate-800 border border-slate-600 rounded px-1.5 py-0.5 text-slate-300 outline-none min-w-0 flex-1"
                 >
                   {tripStructure.map((big, i) => (
                     <option key={i} value={i}>
-                      {(big.displayName || big.folder).slice(0, 20)}
+                      {(big.displayName || big.folder).slice(0, 16)}
                     </option>
                   ))}
                 </select>
@@ -701,14 +701,13 @@ export default function TripRebuilderPage() {
                         return (
                           <div
                             key={si}
-                            className="px-3 py-1.5 flex items-center justify-between bg-slate-900/30 gap-2"
+                            className="px-3 py-1.5 flex items-center justify-between bg-slate-900/30 gap-2 overflow-hidden"
                           >
                             <span
-                              className="text-xs text-emerald-300/80 truncate"
+                              className="text-xs text-emerald-300/80 truncate min-w-0"
                               title={sub.displayName || sub.folder}
                             >
-                              {(sub.displayName || sub.folder).slice(0, 22)}
-                              {(sub.displayName || sub.folder).length > 22 && "…"}
+                              {sub.displayName || sub.folder}
                             </span>
                             <button
                               onClick={() => removeFromContainer(activeBigIdx, c.id, si)}
