@@ -1327,7 +1327,7 @@ export default function ScanPage() {
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
                 修改后直接影响子行程<strong className="text-slate-400">文件夹命名</strong>（如「01_北极镇_0201」）和备注写入；POI 本身不产生文件夹，文件夹在归档时生成
-                <span className="ml-1 text-slate-600">· 排序：省市→POI 字母顺序</span>
+                <span className="ml-1 text-slate-600">· 排序：各组最早拍摄时间（与行程顺序一致）</span>
               </p>
             </div>
             <button

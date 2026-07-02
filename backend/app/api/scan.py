@@ -306,6 +306,9 @@ async def get_geocoded_groups(
                 "sample_name": f.file_name,       # 代表性文件名
                 "files": [],               # 该组文件列表（最多6个，供缩略图预览）
                 "file_count": 0,
+                # 记录该组最早拍摄时间（文件已按 datetime_original 升序排列，
+                # 第一个文件天然是最早的）
+                "earliest_datetime": f.datetime_original or "",
             }
         # 最多收集6个文件路径用于缩略图预览
         if len(groups[key]["files"]) < 6:
@@ -315,10 +318,11 @@ async def get_geocoded_groups(
             })
         groups[key]["file_count"] += 1
 
-    # 按省份 → 城市 → POI 排序
+    # 按最早拍摄时间排序（让 POI 组顺序与行程顺序一致）
+    # 同组时间相同时，按省市/POI 字母顺序作为次级排序
     sorted_groups = sorted(
         groups.values(),
-        key=lambda g: (g["province"], g["city"], g["poi"])
+        key=lambda g: (g["earliest_datetime"], g["province"], g["city"], g["poi"])
     )
 
     return {
