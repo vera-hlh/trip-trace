@@ -95,12 +95,17 @@ async def scan_folder_endpoint(
             yield _sse_event({"type": "scanning", "message": "正在枚举文件..."})
             await asyncio.sleep(0)  # 让出控制权，确保 SSE 先发出
 
-            file_paths = scan_folder(folder_path)
+            file_paths, skipped_dirs = scan_folder(folder_path)
             total = len(file_paths)
 
             if total == 0:
-                yield _sse_event({"type": "complete", "total_files": 0,
-                                  "with_gps": 0, "without_gps": 0, "errors": 0})
+                yield _sse_event({
+                    "type": "complete",
+                    "total_files": 0,
+                    "with_gps": 0, "without_gps": 0, "errors": 0,
+                    "skipped_dirs_count": len(skipped_dirs),
+                    "skipped_dirs": skipped_dirs[:5],
+                })
                 return
 
             yield _sse_event({"type": "start", "total": total})
@@ -207,6 +212,9 @@ async def scan_folder_endpoint(
                 "with_gps": with_gps,
                 "without_gps": without_gps,
                 "errors": errors,
+                # 权限不足被跳过的目录（透明度信息）
+                "skipped_dirs_count": len(skipped_dirs),
+                "skipped_dirs": skipped_dirs[:5],   # 最多返回前5个供显示
             })
 
         except Exception as e:

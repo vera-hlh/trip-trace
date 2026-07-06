@@ -64,22 +64,34 @@ def get_file_type(file_path: str) -> Optional[str]:
     return None
 
 
-def scan_folder(folder_path: str) -> list[str]:
+def scan_folder(folder_path: str) -> tuple[list[str], list[str]]:
     """
-    递归扫描文件夹，返回所有支持的媒体文件路径列表
+    递归扫描文件夹，返回所有支持的媒体文件路径列表。
+
+    Returns:
+        (media_files, skipped_dirs):
+          - media_files: 支持的媒体文件完整路径列表（已排序）
+          - skipped_dirs: 因权限不足被跳过的目录路径列表
     """
     media_files = []
+    skipped_dirs: list[str] = []
     all_extensions = PHOTO_EXTENSIONS | VIDEO_EXTENSIONS
 
-    for root, dirs, files in os.walk(folder_path):
-        # 跳过隐藏目录
+    def _onerror(error: OSError) -> None:
+        """处理 os.walk 遇到无访问权限目录的情况"""
+        path = getattr(error, "filename", None) or str(error)
+        skipped_dirs.append(str(path))
+        logger.warning(f"扫描时跳过目录（无访问权限）: {path}")
+
+    for root, dirs, files in os.walk(folder_path, onerror=_onerror):
+        # 跳过隐藏目录（以 . 开头）
         dirs[:] = [d for d in dirs if not d.startswith(".")]
         for filename in files:
             ext = Path(filename).suffix.lower()
             if ext in all_extensions:
                 media_files.append(os.path.join(root, filename))
 
-    return sorted(media_files)
+    return sorted(media_files), skipped_dirs
 
 
 # ============================================================
