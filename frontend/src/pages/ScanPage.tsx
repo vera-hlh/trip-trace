@@ -31,6 +31,8 @@ interface ScanEvent {
   errors?: number;
   new_files?: number;
   skipped?: number;
+  skipped_dirs_count?: number;   // 因权限不足被跳过的目录数
+  skipped_dirs?: string[];       // 前5个跳过目录路径
 }
 
 interface ScanStats {
@@ -40,6 +42,8 @@ interface ScanStats {
   errors: number;
   newFiles: number;
   skipped: number;
+  skippedDirs: number;        // 因权限跳过的目录数
+  skippedDirNames: string[];  // 路径示例
 }
 
 interface PreviewSummary {
@@ -632,10 +636,13 @@ export default function ScanPage() {
                   errors: ev.errors || 0,
                   newFiles: ev.new_files || 0,
                   skipped: ev.skipped || 0,
+                  skippedDirs: ev.skipped_dirs_count || 0,
+                  skippedDirNames: ev.skipped_dirs || [],
                 };
                 setScanStats(stats);
+                const dirNote = stats.skippedDirs > 0 ? `，${stats.skippedDirs} 个目录因权限跳过` : "";
                 addLog(
-                  `扫描完成：共 ${stats.total} 个文件，新增 ${stats.newFiles}，有 GPS ${stats.withGps}`
+                  `扫描完成：共 ${stats.total} 个文件，新增 ${stats.newFiles}，有 GPS ${stats.withGps}${dirNote}`
                 );
               }
             } catch {}
@@ -1220,12 +1227,32 @@ export default function ScanPage() {
 
         {/* 详细统计格 */}
         {scanStats && step !== "scanning" && (
-          <div className="grid grid-cols-5 gap-2">
-            <StatBox value={scanStats.total} label="总文件" color="text-blue-400" />
-            <StatBox value={scanStats.newFiles} label="新增" color="text-emerald-400" />
-            <StatBox value={scanStats.withGps} label="有GPS" color="text-emerald-400" />
-            <StatBox value={scanStats.withoutGps} label="无GPS" color="text-amber-400" />
-            <StatBox value={scanStats.errors} label="错误" color="text-red-400" />
+          <div className="space-y-2">
+            <div className="grid grid-cols-5 gap-2">
+              <StatBox value={scanStats.total} label="总文件" color="text-blue-400" />
+              <StatBox value={scanStats.newFiles} label="新增" color="text-emerald-400" />
+              <StatBox value={scanStats.withGps} label="有GPS" color="text-emerald-400" />
+              <StatBox value={scanStats.withoutGps} label="无GPS" color="text-amber-400" />
+              <StatBox value={scanStats.errors} label="错误" color="text-red-400" />
+            </div>
+            {/* 跳过目录提示（权限不足时显示）*/}
+            {scanStats.skippedDirs > 0 && (
+              <div className="p-3 bg-slate-800/60 border border-slate-600/40 rounded-lg space-y-1">
+                <p className="text-xs text-slate-400 font-medium">
+                  ⚠️ {scanStats.skippedDirs} 个子目录因权限不足被跳过（其中的文件未被扫描）
+                </p>
+                {scanStats.skippedDirNames.length > 0 && (
+                  <div className="text-xs text-slate-600 font-mono space-y-0.5">
+                    {scanStats.skippedDirNames.map((d, i) => (
+                      <div key={i} className="truncate">· {d}</div>
+                    ))}
+                    {scanStats.skippedDirs > scanStats.skippedDirNames.length && (
+                      <div>...还有 {scanStats.skippedDirs - scanStats.skippedDirNames.length} 个</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
