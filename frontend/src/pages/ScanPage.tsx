@@ -7,7 +7,7 @@
  *   2. 逆地理编码（GPS → 城市名）
  *   3. 归档预览（生成可交互行程树：重命名 / 合并子行程）
  */
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import type { BigTripData, SubTripData } from "@/store/appStore";
 import clsx from "clsx";
@@ -289,7 +289,7 @@ function SubTripThumbnails({ files }: { files: Array<{ name: string; path: strin
           >
             <div className="aspect-square bg-slate-800 rounded-lg overflow-hidden border border-slate-700/50 group-hover:border-blue-600/50 transition-colors">
               <img
-                src={`${API}/api/media/thumbnail?path=${encodeURIComponent(file.path)}&width=160&quality=70`}
+                src={`${API}/api/media/thumbnail?path=${encodeURIComponent(file.path)}&width=120&quality=75`}
                 alt={file.name}
                 loading="lazy"
                 className="w-full h-full object-cover"
@@ -536,6 +536,32 @@ export default function ScanPage() {
   // POI 审核分组状态
   const [poiGroups, setPoiGroups] = useState<PoiGroup[]>([]);
   const [poiGroupsLoading, setPoiGroupsLoading] = useState(false);
+
+  // POI 分组自动恢复：从行程重建页返回时，step="done" 但 poiGroups 已被重置，
+  // 通过 useEffect 在组件挂载时自动重新加载，确保用户能继续审核 POI
+  useEffect(() => {
+    if (step === "done" && poiGroups.length === 0 && sourceFolderPath) {
+      // 延迟一帧确保组件完全挂载后再触发网络请求
+      const timer = setTimeout(() => {
+        fetch(`${API}/api/scan/geocoded?folder_path=${encodeURIComponent(sourceFolderPath)}`)
+          .then((res) => res.json())
+          .then((json) => {
+            if (json.success && json.data.groups.length > 0) {
+              setPoiGroups(
+                json.data.groups.map((g: PoiGroup) => ({
+                  ...g,
+                  draft: g.poi,
+                  editing: false,
+                  saving: false,
+                }))
+              );
+            }
+          })
+          .catch(() => {/* 静默失败，用户可手动刷新 */});
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, []); // 仅在组件挂载时执行一次 // eslint-disable-line react-hooks/exhaustive-deps
 
   // 预览摘要
   const [previewSummary, setPreviewSummary] = useState<PreviewSummary | null>(null);

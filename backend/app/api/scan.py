@@ -516,13 +516,15 @@ async def geocode_scanned_files(
                 MediaFile.geocode_source == "gaode",  # 确认是高德编码结果（才有POI数据）
             )
             .order_by(MediaFile.datetime_original)
-            .limit(500)
+            # 不设置 limit，处理所有符合条件的文件
         )
         files = result.scalars().all()
         if not files:
             return {"success": True, "updated": 0, "message": "无需要补充 POI 的文件"}
     else:
         # 默认模式：处理"有GPS但无city"的文件
+        # 不设置 limit，一次处理所有有GPS但尚未地理编码的文件
+        # （原 limit(500) 会导致大文件夹需要多次执行才能完成）
         result = await db.execute(
             select(MediaFile)
             .where(
@@ -530,7 +532,6 @@ async def geocode_scanned_files(
                 MediaFile.city.is_(None),     # 跳过已有city的文件（已处理过）
             )
             .order_by(MediaFile.datetime_original)
-            .limit(500)
         )
         files = result.scalars().all()
         if not files:
