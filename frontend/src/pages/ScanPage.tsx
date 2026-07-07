@@ -541,6 +541,9 @@ export default function ScanPage() {
   const [poiGroups, setPoiGroups] = useState<PoiGroup[]>([]);
   const [poiGroupsLoading, setPoiGroupsLoading] = useState(false);
 
+  // 大图预览（Lightbox）
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+
   // POI 分组自动恢复：从行程重建页返回时，step="done" 但 poiGroups 已被重置，
   // 通过 useEffect 在组件挂载时自动重新加载，确保用户能继续审核 POI
   useEffect(() => {
@@ -1376,11 +1379,10 @@ export default function ScanPage() {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-sm font-semibold text-slate-300">
-                📍 POI 审核（可选）
+                📍 POI 审核
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                修改后直接影响子行程<strong className="text-slate-400">文件夹命名</strong>（如「01_北极镇_0201」）和备注写入；POI 本身不产生文件夹，文件夹在归档时生成
-                <span className="ml-1 text-slate-600">· 排序：各组最早拍摄时间（与行程顺序一致）</span>
+                POI将作为照片的备注记录下来。你可以点击以下记录按需修改POI。
               </p>
             </div>
             <button
@@ -1393,7 +1395,7 @@ export default function ScanPage() {
           </div>
 
           {/* 分组列表 */}
-          <div className="space-y-1 max-h-96 overflow-y-auto">
+          <div className="space-y-1">
             {poiGroups.map((group, idx) => (
               <div
                 key={idx}
@@ -1519,32 +1521,9 @@ export default function ScanPage() {
                 {/* POI 类型标签 */}
                 <PoiTypeTag poiType={group.poi_type} />
 
-                {/* 文件数 + 复制文件名 */}
-                <div className="flex items-center gap-1 flex-shrink-0">
+                {/* 文件数 */}
+                <div className="flex items-center flex-shrink-0">
                   <span className="text-xs text-slate-500">{group.file_count} 张</span>
-                  {group.sample_name && !group.editing && (
-                    <button
-                      onClick={() => {
-                        const electronAPI = (window as any).electronAPI;
-                        if (electronAPI?.showItemInFolder && group.sample_path) {
-                          electronAPI.showItemInFolder(group.sample_path);
-                        } else {
-                          navigator.clipboard.writeText(group.sample_name || "").then(() => {
-                            setPoiGroups((prev) =>
-                              prev.map((g, i) => i === idx ? { ...g, copied: true } : g)
-                            );
-                            setTimeout(() => setPoiGroups((prev) =>
-                              prev.map((g, i) => i === idx ? { ...g, copied: false } : g)
-                            ), 1500);
-                          });
-                        }
-                      }}
-                      title={`参考文件：${group.sample_name}\n点击复制文件名（浏览器模式），或在资源管理器中显示（Electron 模式）`}
-                      className="text-xs text-slate-600 hover:text-blue-400 transition-colors"
-                    >
-                      {group.copied ? "✅" : "📋"}
-                    </button>
-                  )}
                 </div>
 
                 {/* 操作按钮 */}
@@ -1599,18 +1578,28 @@ export default function ScanPage() {
                   <div className="grid grid-cols-6 gap-1.5 mt-1">
                     {group.files.map((f, fi) => (
                       <div key={fi} className="space-y-0.5">
-                        <div className="aspect-square bg-slate-900 rounded overflow-hidden border border-slate-700/40">
+                        <div
+                          className="aspect-square bg-slate-900 rounded overflow-hidden border border-slate-700/40 cursor-zoom-in relative group/thumb"
+                          title="点击查看大图"
+                          onClick={() => setLightboxSrc(
+                            `${API}/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=1200&quality=90`
+                          )}
+                        >
                           <img
                             src={`${API}/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=120&quality=75`}
                             alt={f.name}
                             loading="lazy"
-                            className="w-full h-full object-cover"
+                            className="w-full h-full object-cover group-hover/thumb:scale-105 transition-transform duration-150"
                             onError={(e) => {
                               (e.currentTarget as HTMLImageElement).style.display = "none";
                               const p = e.currentTarget.parentElement;
                               if (p) p.innerHTML = `<div class="w-full h-full flex items-center justify-center text-slate-600 text-xs">🎬</div>`;
                             }}
                           />
+                          {/* 放大镜提示 */}
+                          <div className="absolute inset-0 bg-black/0 group-hover/thumb:bg-black/30 transition-colors flex items-center justify-center">
+                            <span className="text-white text-base opacity-0 group-hover/thumb:opacity-100 transition-opacity">🔍</span>
+                          </div>
                         </div>
                         <p className="text-xs text-slate-600 truncate leading-tight" title={f.name}>
                           {f.name}
@@ -1624,9 +1613,6 @@ export default function ScanPage() {
             ))}
           </div>
 
-          <p className="text-xs text-slate-600">
-            修改 POI 后会立即保存到数据库，归档备注格式：省份/城市/POI
-          </p>
         </div>
       )}
 
@@ -1740,6 +1726,33 @@ export default function ScanPage() {
                 {log}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── 大图预览 Lightbox ─────────────────────────────── */}
+      {lightboxSrc && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center cursor-zoom-out"
+          onClick={() => setLightboxSrc(null)}
+        >
+          <img
+            src={lightboxSrc}
+            alt="大图预览"
+            className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = "none";
+            }}
+          />
+          <button
+            onClick={() => setLightboxSrc(null)}
+            className="absolute top-4 right-5 text-white/70 hover:text-white text-3xl leading-none transition-colors"
+          >
+            ✕
+          </button>
+          <div className="absolute bottom-4 text-white/40 text-xs">
+            点击任意位置关闭
           </div>
         </div>
       )}
