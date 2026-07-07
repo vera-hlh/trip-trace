@@ -45,7 +45,12 @@ async def get_thumbnail(
         from PIL import Image
 
         with Image.open(decoded_path) as img:
-            # 转为 RGB（处理 RGBA、P 等模式）
+            # 应用 EXIF 方向校正（手机竖拍/横拍时像素数据与显示方向不一致）
+            # ImageOps.exif_transpose 读取 EXIF Orientation tag 并自动旋转/翻转
+            from PIL import ImageOps
+            img = ImageOps.exif_transpose(img)
+
+            # 转为 RGB（处理 RGBA、P 等模式，exif_transpose 后可能改变模式）
             if img.mode not in ("RGB", "L"):
                 img = img.convert("RGB")
 
