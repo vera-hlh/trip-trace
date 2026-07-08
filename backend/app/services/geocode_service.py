@@ -410,11 +410,19 @@ class PoiClusterState:
 
     用于 POI 懒加载聚类：同一大行程内，距离相近 + 时间相近的照片
     复用同一 POI，不重复调用 API。
+
+    注意：必须完整保存 province/district/township 等字段，
+    否则聚类命中时返回的 GeoLocation 会缺失这些字段（变为空字符串），
+    导致同一 POI 的照片因 province 不一致被分成多条记录（bug，已修复）。
     """
     poi_name: str
     city: str
     center_lat: float
     center_lon: float
+    province: str = ""      # 省份（需与首次识别结果保持一致）
+    district: str = ""      # 区县
+    township: str = ""      # 乡镇
+    country: str = ""       # 国家
     radius_m: float = 500.0
     file_count: int = 0
     last_datetime: Optional[datetime] = None
@@ -505,10 +513,15 @@ async def get_location(
         for cluster in poi_clusters:
             if cluster.matches(lat, lon, dt, time_threshold_hours):
                 cluster.update_center(lat, lon, dt)
-                # 直接返回聚类的地理信息
+                # 直接返回聚类的完整地理信息（含 province/district/township，
+                # 保持与首次识别结果完全一致，避免因字段缺失导致
+                # 同一 POI 因 (province, city, poi) key 不同而被拆分为多条记录）
                 return GeoLocation(
-                    country="中国" if cluster.city else "",
+                    country=cluster.country or ("中国" if cluster.city else ""),
+                    province=cluster.province,
                     city=cluster.city,
+                    district=cluster.district,
+                    township=cluster.township,
                     poi=cluster.poi_name,
                     source="offline",
                 ), False
@@ -542,13 +555,17 @@ async def get_location(
             location.country_code = "CN"
             api_called = True
 
-    # 创建新的 POI 聚类
+    # 创建新的 POI 聚类（完整保存地理层级字段，供后续聚类命中时复用）
     if poi_clusters is not None:
         new_cluster = PoiClusterState(
             poi_name=location.poi or location.city,
             city=location.city,
             center_lat=lat,
             center_lon=lon,
+            province=location.province,
+            district=location.district,
+            township=location.township,
+            country=location.country,
             last_datetime=dt,
             file_count=1,
         )
