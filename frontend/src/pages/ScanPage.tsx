@@ -1579,7 +1579,7 @@ export default function ScanPage() {
                     {group.files.map((f, fi) => (
                       <div key={fi} className="space-y-0.5">
                         <div
-                          className="aspect-square bg-slate-900 rounded overflow-hidden border border-slate-700/40 cursor-zoom-in relative group/thumb"
+                          className="aspect-square bg-slate-900 rounded overflow-hidden border border-slate-700/40 cursor-zoom-in group/thumb"
                           title="点击查看大图"
                           onClick={() => setLightboxSrc(
                             `${API}/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=1200&quality=90`
@@ -1596,10 +1596,6 @@ export default function ScanPage() {
                               if (p) p.innerHTML = `<div class="w-full h-full flex items-center justify-center text-slate-600 text-xs">🎬</div>`;
                             }}
                           />
-                          {/* 放大镜提示 */}
-                          <div className="absolute inset-0 bg-black/0 group-hover/thumb:bg-black/30 transition-colors flex items-center justify-center">
-                            <span className="text-white text-base opacity-0 group-hover/thumb:opacity-100 transition-opacity">🔍</span>
-                          </div>
                         </div>
                         <p className="text-xs text-slate-600 truncate leading-tight" title={f.name}>
                           {f.name}
