@@ -1410,7 +1410,12 @@ export default function ScanPage() {
               >
               {/* 整行点击 → 展开/收起（头部纯展示，不含编辑控件） */}
               <div
-                className="flex items-center gap-3 px-3 py-2 text-sm cursor-pointer hover:bg-slate-800/80 transition-colors"
+                className={clsx(
+                  "flex items-center gap-3 px-3 py-2 text-sm cursor-pointer transition-colors",
+                  group.editing
+                    ? "bg-blue-900/30 hover:bg-blue-900/40 border-l-2 border-blue-500"
+                    : "hover:bg-slate-800/80"
+                )}
                 onClick={() => handleToggleExpand(idx)}
               >
                 {/* 序号 */}
@@ -1436,13 +1441,16 @@ export default function ScanPage() {
                 {/* POI 类型标签 */}
                 <PoiTypeTag poiType={group.poi_type} />
 
-                {/* 文件数 */}
-                <div className="flex items-center flex-shrink-0">
-                  <span className="text-xs text-slate-500">{group.file_count} 张</span>
+                {/* 文件数（固定宽度右对齐，避免位数不同导致类型标签错位） */}
+                <div className="flex-shrink-0 w-12 text-right">
+                  <span className="text-xs text-slate-500">{group.file_count}张</span>
                 </div>
 
                 {/* 展开/收起指示箭头 */}
-                <span className="text-slate-500 text-xs flex-shrink-0 w-3 text-center">
+                <span className={clsx(
+                  "text-xs flex-shrink-0 w-3 text-center",
+                  group.editing ? "text-blue-400" : "text-slate-500"
+                )}>
                   {group.editing ? "▲" : "▼"}
                 </span>
               </div>
