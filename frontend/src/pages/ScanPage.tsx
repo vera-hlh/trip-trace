@@ -753,18 +753,29 @@ export default function ScanPage() {
     }
   };
 
-  // ── POI 审核：进入编辑 + 加载候选 ────────────────────────────
+  // ── POI 审核：整行点击 → 展开/收起（合并候选编辑器 + 缩略图）──────
 
-  const handleStartEditPoi = async (idx: number) => {
+  const handleToggleExpand = async (idx: number) => {
     const group = poiGroups[idx];
-    // 设置编辑状态 + 开始加载候选
+
+    if (group.editing) {
+      // 已展开 → 收起，草稿还原为当前 POI（相当于取消未保存的修改）
+      setPoiGroups((prev) =>
+        prev.map((g, i) => (i === idx ? { ...g, editing: false, draft: g.poi } : g))
+      );
+      return;
+    }
+
+    // 展开：先设置 editing=true
     setPoiGroups((prev) =>
-      prev.map((g, i) =>
-        i === idx ? { ...g, editing: true, draft: g.poi, loadingCandidates: true, candidates: null } : g
-      )
+      prev.map((g, i) => (i === idx ? { ...g, editing: true, draft: g.poi } : g))
     );
-    // 如果有坐标，按需拉取候选
-    if (group.lat && group.lon) {
+
+    // 候选 POI 只在首次展开时按需加载（已加载过则不重复请求）
+    if (group.lat && group.lon && group.candidates == null) {
+      setPoiGroups((prev) =>
+        prev.map((g, i) => (i === idx ? { ...g, loadingCandidates: true } : g))
+      );
       try {
         const res = await fetch(
           `${API}/api/scan/poi-candidates?lat=${group.lat}&lon=${group.lon}`
@@ -780,10 +791,6 @@ export default function ScanPage() {
           prev.map((g, i) => i === idx ? { ...g, loadingCandidates: false, candidates: [] } : g)
         );
       }
-    } else {
-      setPoiGroups((prev) =>
-        prev.map((g, i) => i === idx ? { ...g, loadingCandidates: false, candidates: [] } : g)
-      );
     }
   };
 
@@ -1401,7 +1408,11 @@ export default function ScanPage() {
                 key={idx}
                 className="bg-slate-800/50 rounded-lg overflow-hidden"
               >
-              <div className="flex items-center gap-3 px-3 py-2 text-sm">
+              {/* 整行点击 → 展开/收起（头部纯展示，不含编辑控件） */}
+              <div
+                className="flex items-center gap-3 px-3 py-2 text-sm cursor-pointer hover:bg-slate-800/80 transition-colors"
+                onClick={() => handleToggleExpand(idx)}
+              >
                 {/* 序号 */}
                 <span className="text-slate-600 text-xs font-mono w-5 text-right flex-shrink-0">
                   {idx + 1}
@@ -1411,109 +1422,13 @@ export default function ScanPage() {
                   {group.city}
                 </span>
 
-                {/* POI 编辑区 */}
+                {/* POI 展示（只读，编辑区已移到展开区） */}
                 <div className="flex-1 min-w-0">
-                  {group.editing ? (
-                    <div className="space-y-1.5">
-                      {/* 候选 chips（按需加载）*/}
-                      {group.loadingCandidates && (
-                        <div className="text-xs text-slate-500 animate-pulse">⏳ 加载候选...</div>
-                      )}
-                      {group.candidates && group.candidates.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {group.candidates.map((c, ci) => {
-                            // 提取 type emoji
-                            const t = c.type;
-                            const emoji = t.includes("风景名胜") ? "🏞️"
-                              : t.includes("热点地名") || t.includes("标志") ? "📍"
-                              : t.includes("自然地名") ? "🌊"
-                              : t.includes("公园") ? "🌳"
-                              : t.includes("博物") || t.includes("展览") || t.includes("美术") ? "🏛️"
-                              : t.includes("火车站") ? "🚉"
-                              : t.includes("休闲") || t.includes("度假") ? "🎪"
-                              : t.includes("村庄") ? "⚠️"
-                              : "📌";
-                            const isSelected = group.draft === c.name;
-                            return (
-                              <button
-                                key={ci}
-                                onClick={() =>
-                                  setPoiGroups((prev) =>
-                                    prev.map((g, i) => i === idx ? { ...g, draft: c.name } : g)
-                                  )
-                                }
-                                title={`${c.type} | ${c.distance}m`}
-                                className={clsx(
-                                  "text-xs px-2 py-0.5 rounded-lg border transition-all",
-                                  isSelected
-                                    ? "bg-emerald-900/40 border-emerald-600/60 text-emerald-300"
-                                    : "bg-slate-700/60 border-slate-600 text-slate-300 hover:border-blue-500/60 hover:text-blue-300"
-                                )}
-                              >
-                                {emoji} {c.name}
-                                <span className="text-slate-500 ml-1">{c.distance}m</span>
-                              </button>
-                            );
-                          })}
-                          {/* 清空选项 */}
-                          <button
-                            onClick={() =>
-                              setPoiGroups((prev) =>
-                                prev.map((g, i) => i === idx ? { ...g, draft: "" } : g)
-                              )
-                            }
-                            title="清空 POI（仅显示城市）"
-                            className={clsx(
-                              "text-xs px-2 py-0.5 rounded-lg border transition-all",
-                              !group.draft
-                                ? "bg-slate-600 border-slate-500 text-slate-200"
-                                : "bg-slate-700/60 border-slate-600 text-slate-500 hover:text-slate-400"
-                            )}
-                          >
-                            ✕ 清空
-                          </button>
-                        </div>
-                      )}
-                      {/* 自定义输入 */}
-                      <input
-                        type="text"
-                        value={group.draft ?? ""}
-                        onChange={(e) =>
-                          setPoiGroups((prev) =>
-                            prev.map((g, i) =>
-                              i === idx ? { ...g, draft: e.target.value } : g
-                            )
-                          )
-                        }
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") handleSavePoiGroup(idx);
-                          if (e.key === "Escape")
-                            setPoiGroups((prev) =>
-                              prev.map((g, i) =>
-                                i === idx ? { ...g, editing: false, draft: g.poi } : g
-                              )
-                            );
-                        }}
-                        placeholder={group.candidates?.length ? "或输入自定义名称..." : "输入 POI 名称（留空=仅显示城市）"}
-                        autoFocus={!group.candidates}
-                        className="w-full bg-slate-700 border border-blue-500 rounded px-2 py-0.5 text-sm text-white outline-none"
-                      />
-                    </div>
+                  {group.poi ? (
+                    <span className="text-emerald-300">{group.poi}</span>
                   ) : (
-                    <span
-                      onClick={() => handleStartEditPoi(idx)}
-                      className="cursor-pointer hover:text-blue-300 transition-colors"
-                    >
-                      {group.poi ? (
-                        <span className="text-emerald-300">{group.poi}</span>
-                      ) : (
-                        <span className="text-slate-500 italic">
-                          （无 POI，仅显示城市）
-                        </span>
-                      )}
-                      <span className="text-slate-600 hover:text-slate-400 text-xs ml-1.5">
-                        ✏️
-                      </span>
+                    <span className="text-slate-500 italic">
+                      （无 POI，仅显示城市）
                     </span>
                   )}
                 </div>
@@ -1526,83 +1441,140 @@ export default function ScanPage() {
                   <span className="text-xs text-slate-500">{group.file_count} 张</span>
                 </div>
 
-                {/* 操作按钮 */}
-                {group.editing && (
-                  <div className="flex gap-1 flex-shrink-0">
-                    <button
-                      onClick={() => handleSavePoiGroup(idx)}
-                      disabled={group.saving}
-                      className="px-2 py-0.5 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
-                    >
-                      {group.saving ? "..." : "保存"}
-                    </button>
-                    <button
-                      onClick={() =>
-                        setPoiGroups((prev) =>
-                          prev.map((g, i) =>
-                            i === idx
-                              ? { ...g, editing: false, draft: g.poi }
-                              : g
-                          )
-                        )
-                      }
-                      className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded transition-colors"
-                    >
-                      取消
-                    </button>
-                  </div>
-                )}
-
-                {/* 缩略图展开按钮 */}
-                {group.files && group.files.length > 0 && !group.editing && (
-                  <button
-                    onClick={() => setPoiGroups((prev) =>
-                      prev.map((g, i) => i === idx ? { ...g, thumbsOpen: !g.thumbsOpen } : g)
-                    )}
-                    title={group.thumbsOpen ? "收起缩略图" : "展开查看该组文件缩略图"}
-                    className={clsx(
-                      "text-xs px-1.5 py-0.5 border rounded transition-colors flex-shrink-0",
-                      group.thumbsOpen
-                        ? "bg-blue-900/40 border-blue-700/50 text-blue-400"
-                        : "bg-slate-700/50 border-slate-600 text-slate-500 hover:text-slate-300"
-                    )}
-                  >
-                    🖼️
-                  </button>
-                )}
+                {/* 展开/收起指示箭头 */}
+                <span className="text-slate-500 text-xs flex-shrink-0 w-3 text-center">
+                  {group.editing ? "▲" : "▼"}
+                </span>
               </div>
 
-              {/* 缩略图展开区 */}
-              {group.thumbsOpen && group.files && group.files.length > 0 && (
-                <div className="px-3 pb-3 pt-1 border-t border-slate-700/30">
-                  <div className="grid grid-cols-6 gap-1.5 mt-1">
-                    {group.files.map((f, fi) => (
-                      <div key={fi} className="space-y-0.5">
-                        <div
-                          className="aspect-square bg-slate-900 rounded overflow-hidden border border-slate-700/40 cursor-zoom-in group/thumb"
-                          title="点击查看大图"
-                          onClick={() => setLightboxSrc(
-                            `${API}/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=1200&quality=90`
+              {/* 展开区：候选POI编辑器 + 缩略图（合并显示，整行点击触发）*/}
+              {group.editing && (
+                <div className="px-3 pb-3 pt-2 border-t border-slate-700/30 space-y-3">
+                  {/* 候选 POI 编辑器 */}
+                  <div className="space-y-1.5">
+                    {group.loadingCandidates && (
+                      <div className="text-xs text-slate-500 animate-pulse">⏳ 加载候选...</div>
+                    )}
+                    {group.candidates && group.candidates.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {group.candidates.map((c, ci) => {
+                          const t = c.type;
+                          const emoji = t.includes("风景名胜") ? "🏞️"
+                            : t.includes("热点地名") || t.includes("标志") ? "📍"
+                            : t.includes("自然地名") ? "🌊"
+                            : t.includes("公园") ? "🌳"
+                            : t.includes("博物") || t.includes("展览") || t.includes("美术") ? "🏛️"
+                            : t.includes("火车站") ? "🚉"
+                            : t.includes("休闲") || t.includes("度假") ? "🎪"
+                            : t.includes("村庄") ? "⚠️"
+                            : "📌";
+                          const isSelected = group.draft === c.name;
+                          return (
+                            <button
+                              key={ci}
+                              onClick={() =>
+                                setPoiGroups((prev) =>
+                                  prev.map((g, i) => i === idx ? { ...g, draft: c.name } : g)
+                                )
+                              }
+                              title={`${c.type} | ${c.distance}m`}
+                              className={clsx(
+                                "text-xs px-2 py-0.5 rounded-lg border transition-all",
+                                isSelected
+                                  ? "bg-emerald-900/40 border-emerald-600/60 text-emerald-300"
+                                  : "bg-slate-700/60 border-slate-600 text-slate-300 hover:border-blue-500/60 hover:text-blue-300"
+                              )}
+                            >
+                              {emoji} {c.name}
+                              <span className="text-slate-500 ml-1">{c.distance}m</span>
+                            </button>
+                          );
+                        })}
+                        {/* 清空选项 */}
+                        <button
+                          onClick={() =>
+                            setPoiGroups((prev) =>
+                              prev.map((g, i) => i === idx ? { ...g, draft: "" } : g)
+                            )
+                          }
+                          title="清空 POI（仅显示城市）"
+                          className={clsx(
+                            "text-xs px-2 py-0.5 rounded-lg border transition-all",
+                            !group.draft
+                              ? "bg-slate-600 border-slate-500 text-slate-200"
+                              : "bg-slate-700/60 border-slate-600 text-slate-500 hover:text-slate-400"
                           )}
                         >
-                          <img
-                            src={`${API}/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=120&quality=75`}
-                            alt={f.name}
-                            loading="lazy"
-                            className="w-full h-full object-cover group-hover/thumb:scale-105 transition-transform duration-150"
-                            onError={(e) => {
-                              (e.currentTarget as HTMLImageElement).style.display = "none";
-                              const p = e.currentTarget.parentElement;
-                              if (p) p.innerHTML = `<div class="w-full h-full flex items-center justify-center text-slate-600 text-xs">🎬</div>`;
-                            }}
-                          />
-                        </div>
-                        <p className="text-xs text-slate-600 truncate leading-tight" title={f.name}>
-                          {f.name}
-                        </p>
+                          ✕ 清空
+                        </button>
                       </div>
-                    ))}
+                    )}
+                    {/* 自定义输入 + 保存/取消 */}
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={group.draft ?? ""}
+                        onChange={(e) =>
+                          setPoiGroups((prev) =>
+                            prev.map((g, i) =>
+                              i === idx ? { ...g, draft: e.target.value } : g
+                            )
+                          )
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleSavePoiGroup(idx);
+                          if (e.key === "Escape") handleToggleExpand(idx);
+                        }}
+                        placeholder={group.candidates?.length ? "或输入自定义名称..." : "输入 POI 名称（留空=仅显示城市）"}
+                        className="flex-1 bg-slate-700 border border-blue-500 rounded px-2 py-1 text-sm text-white outline-none"
+                      />
+                      <button
+                        onClick={() => handleSavePoiGroup(idx)}
+                        disabled={group.saving}
+                        className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors flex-shrink-0"
+                      >
+                        {group.saving ? "..." : "保存"}
+                      </button>
+                      <button
+                        onClick={() => handleToggleExpand(idx)}
+                        className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded transition-colors flex-shrink-0"
+                      >
+                        取消
+                      </button>
+                    </div>
                   </div>
+
+                  {/* 缩略图网格（6列，展开时始终显示，无需再点一次） */}
+                  {group.files && group.files.length > 0 && (
+                    <div className="grid grid-cols-6 gap-1.5">
+                      {group.files.map((f, fi) => (
+                        <div key={fi} className="space-y-0.5">
+                          <div
+                            className="aspect-square bg-slate-900 rounded overflow-hidden border border-slate-700/40 cursor-zoom-in group/thumb"
+                            title="点击查看大图"
+                            onClick={() => setLightboxSrc(
+                              `${API}/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=1200&quality=90`
+                            )}
+                          >
+                            <img
+                              src={`${API}/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=120&quality=75`}
+                              alt={f.name}
+                              loading="lazy"
+                              className="w-full h-full object-cover group-hover/thumb:scale-105 transition-transform duration-150"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).style.display = "none";
+                                const p = e.currentTarget.parentElement;
+                                if (p) p.innerHTML = `<div class="w-full h-full flex items-center justify-center text-slate-600 text-xs">🎬</div>`;
+                              }}
+                            />
+                          </div>
+                          <p className="text-xs text-slate-600 truncate leading-tight" title={f.name}>
+                            {f.name}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
