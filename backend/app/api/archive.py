@@ -644,6 +644,49 @@ async def archive_execute(
             except Exception as e:
                 logger.warning(f"写入归档日志失败: {e}")
 
+            # ── 8. 写入「我的旅迹」记录（每个大行程一条）─────────
+            try:
+                from app.models.trip_record import TripRecord
+
+                for big in big_trips:
+                    actual_big_folder = big_override.get(big.folder_name, big.folder_name)
+                    big_dir = os.path.join(request.output_path, actual_big_folder)
+                    if not os.path.exists(big_dir):
+                        # 该大行程可能因异常文件路由等原因未实际生成目录，跳过
+                        continue
+
+                    sub_trips_data = []
+                    for sub in big.sub_trips:
+                        actual_sub_folder = sub_override.get(
+                            (big.folder_name, sub.trip_name), sub.trip_name
+                        )
+                        sub_trips_data.append({
+                            "name": actual_sub_folder,
+                            "location": sub.location_label or "",
+                            "start_date": sub.start_date.isoformat() if sub.start_date else None,
+                            "end_date": sub.end_date.isoformat() if sub.end_date else None,
+                            "file_count": sub.file_count,
+                        })
+
+                    trip_record = TripRecord(
+                        user_id="local",
+                        big_trip_name=actual_big_folder,
+                        start_date=big.start_date.isoformat() if big.start_date else None,
+                        end_date=big.end_date.isoformat() if big.end_date else None,
+                        sub_trip_count=len(big.sub_trips),
+                        total_files=big.total_files,
+                        output_folder=request.output_path,
+                        big_trip_folder=actual_big_folder,
+                        created_at=generated_at_iso,
+                        sub_trips_json=json.dumps(sub_trips_data, ensure_ascii=False),
+                        poster_path=None,  # 阶段二生成
+                    )
+                    db.add(trip_record)
+                await db.commit()
+                logger.info(f"「我的旅迹」记录已写入：{len(big_trips)} 个大行程")
+            except Exception as e:
+                logger.warning(f"写入「我的旅迹」记录失败: {e}")
+
             yield _sse_event({
                 "type": "complete",
                 "total_files": total,

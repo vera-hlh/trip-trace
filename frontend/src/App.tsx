@@ -12,6 +12,7 @@ import ScanPage from "@/pages/ScanPage";
 import TripRebuilderPage from "@/pages/TripRebuilderPage";
 import ArchivePage from "@/pages/ArchivePage";
 import MapPage from "@/pages/MapPage";
+import MyTripsPage from "@/pages/MyTripsPage";
 import HistoryPage from "@/pages/HistoryPage";
 import TestConsole from "@/pages/TestConsole";
 
@@ -25,6 +26,7 @@ function PageRouter() {
     case "rebuilder":    return <TripRebuilderPage />;
     case "archive":      return <ArchivePage />;
     case "map":          return <MapPage />;
+    case "my-trips":     return <MyTripsPage />;
     case "history":      return <HistoryPage />;
     case "test":         return <TestConsole />;
     default:             return <HomePage />;

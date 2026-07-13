@@ -2,11 +2,27 @@
  * HomePage.tsx
  * 主页：欢迎界面 + 快速入口 + 后端状态
  */
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import { useAppStore } from "@/store/appStore";
 import clsx from "clsx";
 
 const BACKEND_URL = "http://localhost:17890";
+
+// ── 我的旅迹预览卡片 ─────────────────────────────────────────
+
+interface RecentTripRecord {
+  id: number;
+  big_trip_name: string;
+  start_date: string | null;
+  end_date: string | null;
+  sub_trip_count: number;
+  created_at: string;
+}
+
+function formatShortDate(iso: string | null): string {
+  if (!iso) return "未知";
+  return iso.slice(0, 10);
+}
 
 // ── 状态卡片 ─────────────────────────────────────────────────
 interface StatCardProps {
@@ -80,6 +96,9 @@ export default function HomePage() {
     outputFolderPath,
   } = useAppStore();
 
+  const [recentTrips, setRecentTrips] = useState<RecentTripRecord[]>([]);
+  const [tripsLoading, setTripsLoading] = useState(true);
+
   // 检查后端连接
   const checkBackend = useCallback(async () => {
     try {
@@ -97,6 +116,19 @@ export default function HomePage() {
     const timer = setInterval(checkBackend, 10_000);
     return () => clearInterval(timer);
   }, [checkBackend]);
+
+  // 加载「我的旅迹」最近5条记录
+  useEffect(() => {
+    if (!backendReady) return;
+    setTripsLoading(true);
+    fetch(`${BACKEND_URL}/api/trips/records/recent?limit=5`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.success) setRecentTrips(json.data.records);
+      })
+      .catch(() => {})
+      .finally(() => setTripsLoading(false));
+  }, [backendReady]);
 
   const hasConfig = Boolean(sourceFolderPath && outputFolderPath);
 
@@ -137,6 +169,58 @@ export default function HomePage() {
           重新检测
         </button>
       </div>
+
+      {/* 我的旅迹预览版块（快速开始上方） */}
+      {backendReady && (recentTrips.length > 0 || tripsLoading) && (
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              我的旅迹
+            </h2>
+            <button
+              onClick={() => setCurrentPage("my-trips")}
+              className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              查看全部 →
+            </button>
+          </div>
+
+          <div className="bg-slate-800/40 border border-slate-700/40 rounded-2xl p-4">
+            {tripsLoading ? (
+              <div className="text-xs text-slate-500 text-center py-4">加载中...</div>
+            ) : (
+              <div className="space-y-1.5">
+                {recentTrips.map((t) => (
+                  <div
+                    key={t.id}
+                    className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-slate-800/60 transition-colors cursor-pointer"
+                    onClick={() => setCurrentPage("my-trips")}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm text-slate-200 truncate">📁 {t.big_trip_name}</div>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        {formatShortDate(t.start_date)} → {formatShortDate(t.end_date)}
+                      </div>
+                    </div>
+                    <span className="text-xs bg-emerald-900/30 text-emerald-400 border border-emerald-700/40 px-2 py-0.5 rounded-full flex-shrink-0 ml-2">
+                      {t.sub_trip_count} 子行程
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-end mt-3 pt-3 border-t border-slate-700/40">
+              <button
+                onClick={() => setCurrentPage("my-trips")}
+                className="px-4 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-600/40 rounded-lg text-xs text-blue-300 transition-colors"
+              >
+                📔 进入我的旅迹
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 快速入口 */}
       <div className="mb-8">
