@@ -12,6 +12,7 @@ export type AppPage =
   | "rebuilder"
   | "archive"
   | "map"
+  | "my-trips"
   | "history"
   | "test";
 

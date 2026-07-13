@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import init_db
-from app.api import health, scan, trips, archive, map_routes, media, video, config
+from app.api import health, scan, trips, archive, map_routes, media, video, config, trip_records
 
 app = FastAPI(
     title="TripTrace API",
@@ -39,3 +39,4 @@ app.include_router(map_routes.router, prefix="/api", tags=["地图"])
 app.include_router(media.router, prefix="/api", tags=["媒体"])
 app.include_router(video.router, prefix="/api", tags=["视频"])
 app.include_router(config.router, prefix="/api", tags=["配置"])
+app.include_router(trip_records.router, prefix="/api", tags=["我的旅迹"])

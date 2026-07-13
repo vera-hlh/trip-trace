@@ -21,7 +21,8 @@ const NAV_ITEMS: NavItem[] = [
   { id: "scan",         label: "扫描",       icon: "🔍" },
   { id: "rebuilder",    label: "行程重建",   icon: "🔧" },
   { id: "archive",      label: "归档",       icon: "📦" },
-  { id: "map",          label: "地图",       icon: "🗺️", dividerAfter: true },
+  { id: "map",          label: "地图",       icon: "🗺️" },
+  { id: "my-trips",     label: "我的旅迹",   icon: "📔", dividerAfter: true },
   { id: "history",      label: "操作记录",   icon: "📋" },
   { id: "test",         label: "测试控制台", icon: "🧪" },
 ];
