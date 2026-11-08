@@ -165,9 +165,9 @@ frontend/src/pages/
 
 ## 重要路径
 
-- 高德 Key：`backend/.env` → `TRIPRACE_GAODE_API_KEY=***REMOVED***`（不要提交 git）
-- 测试照片：`C:\Users\Microsoft\Desktop\我的不动产\Eva\相册工具\测试文件夹（东北）`（42个文件）
-- 数据库：`C:\Dev\trip-trace\backend\triprace.sqlite`
+- 高德 Key：只放本机 `backend/.env` 的 `TRIPRACE_GAODE_API_KEY=${TRIPRACE_GAODE_API_KEY}`（**切勿把真实 Key 写入文档或提交 git**；历史泄露的旧 Key 必须作废重建，见 `project-overview.md §7`）
+- 测试照片：`<测试目录>`（示例，勿写入个人绝对路径）
+- 数据库：`<项目目录>/backend/triprace.sqlite`
 
 ---
 
