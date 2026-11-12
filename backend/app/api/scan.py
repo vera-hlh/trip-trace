@@ -498,13 +498,14 @@ async def geocode_scanned_files(
         get_location,
         translate_cn_location,
         PoiClusterState,
-        _is_in_china_bbox,
+        is_in_china,
     )
     from datetime import datetime as _dt
 
     gaode_key = settings.gaode_api_key  # 读取 .env 中的 Key
 
     force_repoi = (body.force_repoi if body else False)
+    trip_type = (body.trip_type if body else "mixed")
 
     if force_repoi:
         # force_repoi 模式：重新处理"已有city但poi为空"的文件，只更新 poi 字段
@@ -561,7 +562,9 @@ async def geocode_scanned_files(
                     pass
 
             if force_repoi:
-                # force_repoi 模式：直接调用高德 API，只更新 poi 字段
+                # force_repoi 模式：只处理国内坐标，境外行程强制离线
+                if trip_type == "abroad" or not is_in_china(f.latitude, f.longitude):
+                    continue
                 from app.services.geocode_service import reverse_geocode_gaode
                 online_loc = await reverse_geocode_gaode(f.latitude, f.longitude, gaode_key)
                 api_calls += 1
@@ -578,6 +581,7 @@ async def geocode_scanned_files(
                     gaode_api_key=gaode_key,
                     poi_clusters=poi_clusters,
                     time_threshold_hours=settings.small_trip_threshold_hours,
+                    trip_type=trip_type,
                 )
 
                 if api_called:
@@ -637,7 +641,7 @@ async def geocode_scanned_files(
         )
         all_gps_files = all_gps_result.scalars().all()
         for f in all_gps_files:
-            in_china = _is_in_china_bbox(f.latitude, f.longitude)
+            in_china = is_in_china(f.latitude, f.longitude)
             is_anomaly = (
                 (trip_type == "domestic" and not in_china) or
                 (trip_type == "abroad" and in_china)

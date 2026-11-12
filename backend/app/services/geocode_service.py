@@ -13,11 +13,13 @@
   - 仅在切换景点时触发
   - 离线无法获取具体景点名（POI），需在线增强
 """
+import json
 import logging
 import math
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -463,22 +465,69 @@ class PoiClusterState:
 
 
 # ============================================================
-# 中国地理范围边界框判断（兜底，修复边境离线库误判）
+# 中国地理范围判断（多边形，替代粗略矩形 bbox）
 # ============================================================
 
+_CHINA_RINGS: Optional[list[tuple[float, float, float, float, list]]] = None
+
+
 def _is_in_china_bbox(lat: float, lon: float) -> bool:
-    """
-    判断坐标是否在中国地理范围边界框内（粗略矩形判断）。
-
-    用于修复 reverse_geocoder 在中俄/中蒙/中越等边境地区的误判问题：
-    例如漠河北极镇坐标可能被离线库识别为俄罗斯 Yerofey Pavlovich，
-    但实际坐标在中国境内 → 需调用高德 API 获取正确中文地名。
-
-    范围参考（含港澳台、含黑龙江最北端、含新疆南疆）：
-      经度：73.0°E ~ 135.5°E
-      纬度：17.5°N ~ 53.6°N
-    """
+    """粗略矩形兜底；仅在多边形数据缺失时使用。"""
     return 73.0 <= lon <= 135.5 and 17.5 <= lat <= 53.6
+
+
+def _load_china_rings() -> list[tuple[float, float, float, float, list]]:
+    """加载简化后的中国国界多边形（DataV 100000）。"""
+    path = Path(__file__).resolve().parents[1] / "data" / "china_boundary.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        raw_rings = payload.get("rings", [])
+        rings = []
+        for ring in raw_rings:
+            if len(ring) < 3:
+                continue
+            lons = [p[0] for p in ring]
+            lats = [p[1] for p in ring]
+            rings.append((min(lons), max(lons), min(lats), max(lats), ring))
+        return rings
+    except Exception as exc:
+        logger.warning("加载中国国界多边形失败，回退 bbox: %s", exc)
+        return []
+
+
+def _point_in_ring(lon: float, lat: float, ring: list) -> bool:
+    """射线法判断点是否在多边形内（ring 为 [lon, lat] 列表）。"""
+    inside = False
+    j = len(ring) - 1
+    for i in range(len(ring)):
+        xi, yi = ring[i]
+        xj, yj = ring[j]
+        if ((yi > lat) != (yj > lat)) and (
+            lon < (xj - xi) * (lat - yi) / (yj - yi) + xi
+        ):
+            inside = not inside
+        j = i
+    return inside
+
+
+def is_in_china(lat: float, lon: float) -> bool:
+    """判断坐标是否在中国国界内（含主要岛屿；比矩形 bbox 精确）。"""
+    global _CHINA_RINGS
+    if _CHINA_RINGS is None:
+        _CHINA_RINGS = _load_china_rings()
+
+    if not _CHINA_RINGS:
+        return _is_in_china_bbox(lat, lon)
+
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return False
+
+    for min_lon, max_lon, min_lat, max_lat, ring in _CHINA_RINGS:
+        if min_lon <= lon <= max_lon and min_lat <= lat <= max_lat:
+            if _point_in_ring(lon, lat, ring):
+                return True
+    return False
+
 
 
 # ============================================================
@@ -492,6 +541,7 @@ async def get_location(
     gaode_api_key: str = "",
     poi_clusters: Optional[list[PoiClusterState]] = None,
     time_threshold_hours: float = 2.0,
+    trip_type: str = "mixed",
 ) -> tuple[GeoLocation, bool]:
     """
     三层逆地理编码统一入口
@@ -503,6 +553,7 @@ async def get_location(
         gaode_api_key: 高德 API Key（空则跳过第三层）
         poi_clusters: 当前行程的 POI 聚类列表（None 则不做聚类）
         time_threshold_hours: POI 聚类时间阈值（小时）
+        trip_type: "domestic" | "abroad" | "mixed"；abroad 强制离线
 
     Returns:
         (GeoLocation, api_called)
@@ -535,12 +586,14 @@ async def get_location(
 
     # 第三层：在线 API 增强（获取 POI 景点名）
     #
-    # 触发条件：配置了高德 Key，且坐标在中国范围内。
-    # 注意：is_china 依赖离线库的国家判断，在中俄边境等地区可能误判为境外
-    # （如漠河北极镇被误识别为俄罗斯 Yerofey Pavlovich）。
-    # 因此额外用坐标边界框兜底：只要经纬度落在中国范围内就调用高德 API。
-    in_china = location.is_china or _is_in_china_bbox(lat, lon)
-    if gaode_api_key and in_china:
+    # 触发条件：
+    #   - 配置了高德 Key；
+    #   - 行程类型不是 abroad；
+    #   - 坐标在中国国界多边形内。
+    # 这样境外行程不会被误送到高德，也不会把首尔/河内/乌兰巴托标成中国。
+    in_china = is_in_china(lat, lon)
+    allow_online = trip_type != "abroad" and in_china
+    if gaode_api_key and allow_online:
         online_loc = await reverse_geocode_gaode(lat, lon, gaode_api_key)
         if online_loc:
             # 合并：优先使用高德的中文地名
