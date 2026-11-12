@@ -80,9 +80,9 @@ Error: spawn EPERM
 | 行程重建 / 容器 | ⚠️ 前端可用，执行端只按文件夹名映射 |
 | 大行程合并 | ⚠️ UI 有，执行端不尊重（见 3.2） |
 | 子行程合并 | ❌ 已按用户要求取消，只剩死代码与过期提示 |
-| 归档执行 | ✅ 可用；同名冲突静默跳过 |
+| 归档执行 | ✅ 可用；同名冲突保留源相对路径，执行前校验 |
 | 备注写入 | ✅ 可用；Pillow 重编码有质量风险 |
-| 删除原文件 | ⚠️ 可用但危险；回执字段写错，永久删除 |
+| 删除原文件 | ✅ 可用（M3）：默认回收站、目标/size 校验 |
 | 地图 | ⚠️ 城市热点 + 轨迹；POI 热点/轮播/动画无 |
 | 我的旅迹（列表/详情） | ✅ 可用 |
 | 海报（阶段二） | ❌ 方案 A 已定，未实现 |
@@ -155,11 +155,11 @@ Cline 里 agent 的方案原话是：
 |---|---|---|
 | 1 | 公开仓库历史含旧高德 Key，且未见轮换 | `git log -S`、仓库公开、`.env` mtime 6/17 |
 | 2 | 无持久化方案；大行程合并执行端不生效 | `archive.py:394`、`ArchivePage.tsx:291` |
-| 3 | 同名文件冲突静默跳过，归档缺文件 | `archive.py:508` |
-| 4 | cleanup 回执字段错（`deleted` vs `deleted_count`）、永久删除、无目标校验 | `archive.py:832`、`ArchivePage.tsx:341` |
+| 3 | 同名文件冲突静默跳过，归档缺文件 | `archive.py:508`（M3.1 已修） |
+| 4 | cleanup 回执字段错（`deleted` vs `deleted_count`）、永久删除、无目标校验 | `archive.py:832`、`ArchivePage.tsx:341`（M3.2a 已修） |
 | 5 | `trip_type` 未参与地理编码；中国 bbox 覆盖韩/越/蒙/俄边境，境外可能标成中国 | `scan.py:631`、`geocode_service.py:542` |
 | 6 | HEIC/RAW 无解码器；视频只读 `©day`，iPhone 素材时间/GPS 退化 | `metadata_service.py:26`、`:360` |
-| 7 | 用户可编辑目录名未净化，存在路径穿越/非法名 | `archive.py:446` |
+| 7 | 用户可编辑目录名未净化，存在路径穿越/非法名 | `archive.py:446`（M3.2b 已修） |
 
 ### P1（架构/一致性）
 
@@ -189,7 +189,7 @@ Cline 里 agent 的方案原话是：
 1. **凭据**：旧 Key 在公开历史中，按已泄露处理；先轮换，再清历史，再开 Secret Scanning。
 2. **本地 API 无鉴权 + CORS `*`**：任意网页可调用 `scan/clear`、`archive/cleanup`、`archive/execute`。
 3. **任意文件读取**：`/api/media/thumbnail?path=` 接受任意绝对路径。
-4. **路径穿越写入**：`display_name` 可含 `..\` 或绝对路径。
+4. **路径穿越写入**：`display_name` 可含 `..\` 或绝对路径（M3.2b 已修：统一净化 + 后端校验）。
 5. **Electron `webSecurity: false`** + 地图 iframe 同源，XSS 可触达 `electronAPI`。
 6. **隐私**：GPS 会发往高德，地图瓦片请求 CartoDB/OSM；应在 UI 明示并提供纯离线模式。
 
@@ -310,6 +310,8 @@ M4/M5/M6 可在 M2 之后并行；M9 在 1.0 之后。
 > （`backend/tests/test_plan_e2e.py`：生成 → 重命名/容器/大行程合并 → 执行 → 校验磁盘）。
 > 尚未实现：`DELETE` 方案、按时间拆分、执行幂等/只重试失败项、`planId` 跨重启持久化。
 > 旧 `preview` / `execute` 已标记 deprecated，保留到 M7 前删除。
+>
+> **M3 状态（2026-11-13）**：同名冲突、复制校验、cleanup 回收站、目录名净化、路径前缀、DB/.env 用户目录均已完成；127 tests 通过。
 
 ### 12.1 表
 
