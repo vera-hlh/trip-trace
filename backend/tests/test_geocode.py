@@ -212,7 +212,7 @@ class TestGeoLocation:
             city="昆明市",
             poi="石林风景区",
         )
-        assert loc.to_remark_path() == "中国/云南省/昆明市/石林风景区"
+        assert loc.to_remark_path() == "云南省/昆明市/石林风景区"
 
     def test_remark_path_without_poi(self):
         """无 POI 时用 district 替代"""
@@ -222,12 +222,12 @@ class TestGeoLocation:
             city="昆明市",
             district="石林彝族自治县",
         )
-        assert loc.to_remark_path() == "中国/云南省/昆明市/石林彝族自治县"
+        assert loc.to_remark_path() == "云南省/昆明市/石林彝族自治县"
 
     def test_remark_path_empty_fields_skipped(self):
         """空字段被跳过"""
         loc = GeoLocation(country="中国", city="昆明市")
-        assert loc.to_remark_path() == "中国/昆明市"
+        assert loc.to_remark_path() == "昆明市"
 
 
 # ============================================================

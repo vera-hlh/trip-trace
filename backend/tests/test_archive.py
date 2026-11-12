@@ -308,8 +308,9 @@ class TestYunnanTrip:
         big_trips = segment_into_trips(items)
 
         big = big_trips[0]
-        # 大行程文件夹含年月
-        assert "2025-09" in big.folder_name
+        # 大行程文件夹格式：{year}_{地点摘要}_{天数}天_{MMDD}-{MMDD}
+        assert big.folder_name.startswith("2025_")
+        assert "天_" in big.folder_name
 
         # 子行程文件夹格式：序号_地点_MMDD-MMDD
         for sub in big.sub_trips:
@@ -372,7 +373,7 @@ class TestArchivePreview:
         item = preview[0]
 
         assert "C:/归档" in item.target_path
-        assert "2025-09" in item.target_path
+        assert "2025_" in item.target_path
         assert "昆明" in item.target_path
         assert "IMG_001.jpg" in item.target_path
         assert item.original_path == "C:/Photos/IMG_001.jpg"

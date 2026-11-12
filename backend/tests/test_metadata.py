@@ -225,8 +225,9 @@ class TestScanFolder:
         (tmp_path / "document.txt").touch()   # 应被忽略
         (tmp_path / "archive.zip").touch()    # 应被忽略
 
-        results = scan_folder(str(tmp_path))
+        results, skipped = scan_folder(str(tmp_path))
         assert len(results) == 3
+        assert skipped == []
         filenames = [os.path.basename(p) for p in results]
         assert "photo1.jpg" in filenames
         assert "photo2.JPEG" in filenames
@@ -240,8 +241,9 @@ class TestScanFolder:
         (tmp_path / "root.jpg").touch()
         (subdir / "sub.jpg").touch()
 
-        results = scan_folder(str(tmp_path))
+        results, skipped = scan_folder(str(tmp_path))
         assert len(results) == 2
+        assert skipped == []
 
     def test_skips_hidden_dirs(self, tmp_path):
         """跳过以点开头的隐藏目录"""
@@ -250,13 +252,15 @@ class TestScanFolder:
         (hidden / "photo.jpg").touch()
         (tmp_path / "visible.jpg").touch()
 
-        results = scan_folder(str(tmp_path))
+        results, skipped = scan_folder(str(tmp_path))
         assert len(results) == 1
+        assert skipped == []
 
     def test_empty_folder(self, tmp_path):
         """空文件夹返回空列表"""
-        results = scan_folder(str(tmp_path))
+        results, skipped = scan_folder(str(tmp_path))
         assert results == []
+        assert skipped == []
 
 
 # ============================================================
