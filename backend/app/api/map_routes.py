@@ -27,15 +27,11 @@ async def _load_files(
 ) -> list:
     """从数据库加载文件，可选按文件夹路径过滤"""
     if folder_path and folder_path.strip():
-        norm = os.path.normpath(folder_path.strip())
-        from sqlalchemy import or_
+        prefix = os.path.normpath(folder_path.strip()).rstrip("\\/") + os.sep
         result = await db.execute(
-            select(MediaFile).where(
-                or_(
-                    MediaFile.original_path.like(f"{norm}%"),
-                    MediaFile.original_path.like(f"{norm.replace(chr(92), '/')}%"),
-                )
-            ).order_by(MediaFile.datetime_original)
+            select(MediaFile)
+            .where(MediaFile.original_path.like(f"{prefix}%"))
+            .order_by(MediaFile.datetime_original)
         )
     else:
         result = await db.execute(
@@ -90,14 +86,8 @@ async def get_map_photos(
 
     # 文件夹过滤
     if folder_path and folder_path.strip():
-        norm = os.path.normpath(folder_path.strip())
-        from sqlalchemy import or_
-        conditions.append(
-            or_(
-                MediaFile.original_path.like(f"{norm}%"),
-                MediaFile.original_path.like(f"{norm.replace(chr(92), '/')}%"),
-            )
-        )
+        prefix = os.path.normpath(folder_path.strip()).rstrip("\\/") + os.sep
+        conditions.append(MediaFile.original_path.like(f"{prefix}%"))
 
     from sqlalchemy import and_
     result = await db.execute(

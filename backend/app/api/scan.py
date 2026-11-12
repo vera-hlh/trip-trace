@@ -284,14 +284,8 @@ async def get_geocoded_groups(
     conditions = [MediaFile.city.is_not(None)]
 
     if folder_path and folder_path.strip():
-        norm = os.path.normpath(folder_path.strip())
-        from sqlalchemy import or_
-        conditions.append(
-            or_(
-                MediaFile.original_path.like(f"{norm}%"),
-                MediaFile.original_path.like(f"{norm.replace(chr(92), '/')}%"),
-            )
-        )
+        prefix = os.path.normpath(folder_path.strip()).rstrip("\\/") + os.sep
+        conditions.append(MediaFile.original_path.like(f"{prefix}%"))
 
     result = await db.execute(
         select(MediaFile).where(*conditions).order_by(MediaFile.datetime_original)

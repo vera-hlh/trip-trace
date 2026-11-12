@@ -119,29 +119,15 @@ def _sse_event(data: dict) -> str:
 # ============================================================
 
 async def _load_db_files(db: AsyncSession, folder_path: str) -> list:
-    norm_folder = os.path.normpath(folder_path)
-    from sqlalchemy import or_
+    """只匹配 folder_path 内部的文件，避免 C:/Photos 命中 C:/Photos2024。"""
+    norm_folder = os.path.normpath(folder_path).rstrip("\\/")
+    prefix = norm_folder + os.sep
     result = await db.execute(
-        select(MediaFile).where(
-            or_(
-                MediaFile.original_path.like(f"{norm_folder}%"),
-                MediaFile.original_path.like(f"{norm_folder.replace(chr(92), chr(92)*2)}%"),
-                MediaFile.original_path.like(f"{norm_folder.replace(chr(92), '/')}%"),
-            )
-        ).order_by(MediaFile.datetime_original)
+        select(MediaFile)
+        .where(MediaFile.original_path.like(f"{prefix}%"))
+        .order_by(MediaFile.datetime_original)
     )
-    db_files = result.scalars().all()
-
-    if not db_files:
-        folder_name = os.path.basename(norm_folder)
-        result2 = await db.execute(
-            select(MediaFile).where(
-                MediaFile.original_path.contains(folder_name)
-            ).order_by(MediaFile.datetime_original)
-        )
-        db_files = result2.scalars().all()
-
-    return db_files
+    return result.scalars().all()
 
 
 def _build_media_items(db_files: list) -> list[MediaItem]:

@@ -32,6 +32,7 @@ from app.services.archive_service import (
 )
 from app.services.plan_executor import load_plan_media, run_plan, source_snapshot
 from app.services.plan_paths import build_target_rel_path
+from app.utils.path_utils import sanitize_folder_name, validate_folder_name
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -82,15 +83,11 @@ _ALLOWED_MODES = {"tree", "rebuild", "mixed"}
 
 
 def _clean_name(value: str, field: str) -> str:
-    """基础目录名校验；完整的 Windows 非法字符策略在 M3 统一处理。"""
-    name = (value or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail=f"{field} 不能为空")
-    if name in (".", "..") or any(ch in name for ch in '<>:"/\\|?*'):
-        raise HTTPException(status_code=400, detail=f"{field} 含非法字符: {name}")
-    if len(name) > 120:
-        raise HTTPException(status_code=400, detail=f"{field} 过长（>120 字符）")
-    return name
+    """用户输入目录名校验（Windows 非法字符/保留名/长度）。"""
+    try:
+        return validate_folder_name(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"{field} {exc}")
 
 
 def _basename(path: str) -> str:
@@ -203,11 +200,14 @@ async def build_plan_from_files(
     sub_count = 0
 
     for big_index, big in enumerate(big_trips):
+        big_folder = sanitize_folder_name(big.folder_name, "大行程")
         big_row = PlanTrip(
             plan_id=plan.id,
             kind="big",
-            folder_name=big.folder_name,
-            display_name=big.display_name or big.folder_name,
+            folder_name=big_folder,
+            display_name=sanitize_folder_name(
+                big.display_name or big.folder_name, big_folder
+            ),
             start_date=_iso(big.start_date),
             end_date=_iso(big.end_date),
             sort_order=big_index,
@@ -216,12 +216,13 @@ async def build_plan_from_files(
         await db.flush()
 
         for sub_index, sub in enumerate(big.sub_trips):
+            sub_folder = sanitize_folder_name(sub.trip_name, "子行程")
             sub_row = PlanTrip(
                 plan_id=plan.id,
                 parent_id=big_row.id,
                 kind="sub",
-                folder_name=sub.trip_name,
-                display_name=sub.trip_name,
+                folder_name=sub_folder,
+                display_name=sub_folder,
                 start_date=_iso(sub.start_date),
                 end_date=_iso(sub.end_date),
                 sequence_num=sub.sequence_num,
@@ -238,8 +239,8 @@ async def build_plan_from_files(
                     trip_id=sub_row.id,
                     media_file_id=path_to_media_id.get(item.file_path),
                     target_rel_path=build_target_rel_path(
-                        big.folder_name,
-                        sub.trip_name,
+                        big_folder,
+                        sub_folder,
                         item.file_path,
                         source_root,
                         item.file_name,

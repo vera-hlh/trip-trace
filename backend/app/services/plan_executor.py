@@ -20,6 +20,7 @@ from app.models.archive_plan import ArchivePlan, PlanFile, PlanTrip
 from app.models.file import MediaFile
 from app.models.trip_record import TripRecord
 from app.services.remark_service import format_remark, write_remark
+from app.utils.path_utils import path_is_within
 
 logger = logging.getLogger(__name__)
 
@@ -177,10 +178,7 @@ async def run_plan(
             continue
 
         target = os.path.abspath(os.path.join(root, pf.target_rel_path))
-        try:
-            if os.path.normcase(os.path.commonpath([root, target])) != os.path.normcase(root):
-                raise ValueError("目标路径越界")
-        except ValueError:
+        if not path_is_within(target, root):
             errors += 1
             pf.status = "failed"
             pf.error = "目标路径越界"
