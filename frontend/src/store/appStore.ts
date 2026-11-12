@@ -30,6 +30,7 @@ export interface SubTripFileItem {
 }
 
 export interface SubTripData {
+  planTripId?: number;  // 对应后端 plan_trips.id
   folder: string;      // 原始文件夹名（后端生成）
   displayName: string; // 用户可编辑显示名称
   location: string;
@@ -48,6 +49,7 @@ export interface TripContainer {
 }
 
 export interface BigTripData {
+  planTripId?: number;  // 对应后端 plan_trips.id
   folder: string;      // 原始文件夹名（后端生成）
   displayName: string; // 用户可编辑显示名称
   start_date: string | null;
@@ -81,6 +83,12 @@ interface AppState {
   tripStructure: BigTripData[] | null;
   setTripStructure: (trips: BigTripData[] | null) => void;
   updateBigTripContainers: (bigIndex: number, containers: TripContainer[]) => void;
+
+  // 当前归档方案（不持久化：应用重启后由后端方案恢复）
+  currentPlanId: number | null;
+  setCurrentPlanId: (id: number | null) => void;
+  planVersion: number;
+  setPlanVersion: (version: number) => void;
 
   // 行程类型（持久化 - 影响地理编码策略和异常文件处理）
   tripType: "domestic" | "abroad" | "mixed";
@@ -130,6 +138,12 @@ export const useAppStore = create<AppState>()(
           );
           return { tripStructure: updated };
         }),
+
+      // 当前归档方案
+      currentPlanId: null,
+      setCurrentPlanId: (id) => set({ currentPlanId: id }),
+      planVersion: 0,
+      setPlanVersion: (version) => set({ planVersion: version }),
 
       // 行程类型
       tripType: "domestic" as const,

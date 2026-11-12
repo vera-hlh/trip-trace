@@ -10,6 +10,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import type { BigTripData, SubTripData } from "@/store/appStore";
+import { createArchivePlan, getArchivePlan } from "@/api/backend";
 import clsx from "clsx";
 
 const API = "http://localhost:17890";
@@ -509,6 +510,8 @@ export default function ScanPage() {
     setTripStructure,
     tripType,
     setTripType,
+    setCurrentPlanId,
+    setPlanVersion,
   } = useAppStore();
 
   // 流程步骤
@@ -595,6 +598,8 @@ export default function ScanPage() {
     setStep("scanning");
     setScanEvents([]);
     setScanStats(null);
+    setCurrentPlanId(null);
+    setPlanVersion(0);
     addLog(`开始扫描：${sourceFolderPath}`);
 
     if (clearBeforeScan) {
@@ -853,66 +858,76 @@ export default function ScanPage() {
   const handlePreview = async () => {
     if (!sourceFolderPath || !outputFolderPath) return;
     setStep("previewing");
-    addLog("生成归档预览...");
+    addLog("生成归档方案...");
 
     try {
-      const res = await fetch(`${API}/api/archive/preview`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          folder_path: sourceFolderPath,
-          output_path: outputFolderPath,
-          options: {
-            big_trip_threshold_days: settings.bigTripThresholdDays,
-            small_trip_threshold_hours: settings.smallTripThresholdHours,
-          },
-        }),
+      const created = await createArchivePlan({
+        folder_path: sourceFolderPath,
+        output_path: outputFolderPath,
+        options: {
+          big_trip_threshold_days: settings.bigTripThresholdDays,
+          small_trip_threshold_hours: settings.smallTripThresholdHours,
+        },
       });
-
-      const json = await res.json();
-      if (json.success && json.data) {
-        const s = json.data.summary;
-        setPreviewSummary(s);
-
-        // 构建文件映射：大行程文件夹::子行程文件夹 → 文件列表
-        const fileMap = new Map<string, Array<{ name: string; path: string }>>();
-        for (const p of json.data.preview as any[]) {
-          const key = `${p.big_trip_folder}::${p.sub_trip_folder}`;
-          if (!fileMap.has(key)) fileMap.set(key, []);
-          fileMap.get(key)!.push({ name: p.file_name, path: p.original_path });
-        }
-
-        // 将后端结构转为可编辑本地结构（含文件列表）
-        const parsed: BigTripData[] = (json.data.trips_structure as any[]).map(
-          (big) => ({
-            folder: big.folder,
-            displayName: big.folder,
-            start_date: big.start_date,
-            end_date: big.end_date,
-            total_files: big.total_files,
-            sub_trips: (big.sub_trips as any[]).map((sub) => ({
-              folder: sub.folder,
-              displayName: sub.folder,
-              location: sub.location || "",
-              start_date: sub.start_date,
-              end_date: sub.end_date,
-              file_count: sub.file_count,
-              files: fileMap.get(`${big.folder}::${sub.folder}`) || [],
-            })),
-          })
-        );
-
-        setTripStructure(parsed);
-        addLog(
-          `预览完成：${s.big_trips_created} 大行程，${s.sub_trips_created} 子行程，共 ${s.total_files} 个文件`
-        );
-        setStep("done");
-      } else {
-        addLog(`预览失败: ${JSON.stringify(json)}`);
-        setStep("geocode-done");
+      if (!created.success || !created.data?.plan_id) {
+        throw new Error(created.error || created.detail || "创建归档方案失败");
       }
+
+      const planId = created.data.plan_id as number;
+      const detail = await getArchivePlan(planId);
+      if (!detail.success || !detail.data) {
+        throw new Error("读取归档方案失败");
+      }
+
+      const { plan, trips_structure, files } = detail.data;
+      setCurrentPlanId(planId);
+      setPlanVersion(plan.plan_version);
+
+      // 按子行程 id 归组文件，供缩略图预览
+      const fileMap = new Map<number, Array<{ name: string; path: string }>>();
+      for (const f of files) {
+        if (f.trip_id == null) continue;
+        const name =
+          f.file_name ||
+          f.target_rel_path.replace(/\\/g, "/").split("/").pop() ||
+          "";
+        if (!fileMap.has(f.trip_id)) fileMap.set(f.trip_id, []);
+        fileMap.get(f.trip_id)!.push({ name, path: f.original_path || "" });
+      }
+
+      const parsed: BigTripData[] = trips_structure.map((big) => ({
+        planTripId: big.id,
+        folder: big.folder,
+        displayName: big.display_name || big.folder,
+        start_date: big.start_date,
+        end_date: big.end_date,
+        total_files: big.total_files ?? 0,
+        sub_trips: (big.sub_trips || []).map((sub) => ({
+          planTripId: sub.id,
+          folder: sub.folder,
+          displayName: sub.display_name || sub.folder,
+          location: sub.location || "",
+          start_date: sub.start_date,
+          end_date: sub.end_date,
+          file_count: sub.file_count ?? 0,
+          files: fileMap.get(sub.id) || [],
+        })),
+      }));
+
+      setTripStructure(parsed);
+      const subCount = parsed.reduce((n, big) => n + big.sub_trips.length, 0);
+      setPreviewSummary({
+        total_files: files.length,
+        big_trips_created: parsed.length,
+        sub_trips_created: subCount,
+        files_without_gps: scanStats?.withoutGps ?? 0,
+      });
+      addLog(
+        `方案已生成：${parsed.length} 大行程，${subCount} 子行程，共 ${files.length} 个文件（plan #${planId} v${plan.plan_version}）`
+      );
+      setStep("done");
     } catch (e) {
-      addLog(`预览请求失败: ${e}`);
+      addLog(`生成方案失败: ${e}`);
       setStep("geocode-done");
     }
   };
@@ -990,6 +1005,8 @@ export default function ScanPage() {
     setPoiGroups([]);
     setPreviewSummary(null);
     setTripStructure(null);
+    setCurrentPlanId(null);
+    setPlanVersion(0);
     setLogs([]);
   };
 
