@@ -11,6 +11,7 @@
 import { useState } from "react";
 import { useAppStore } from "@/store/appStore";
 import type { BigTripData, TripContainer } from "@/store/appStore";
+import {executeArchivePlan, patchArchivePlan} from "@/api/backend";
 import clsx from "clsx";
 
 const API = "http://localhost:17890";
@@ -23,6 +24,8 @@ interface ExecuteEvent {
   total?: number;
   file?: string;
   target_folder?: string;
+  target?: string;
+  plan_id?: number;
   reason?: string;
   message?: string;
   success?: boolean;
@@ -232,6 +235,37 @@ function buildContainersPayload(trips: BigTripData[]) {
     }));
 }
 
+/**
+ * 把前端当前的本地编辑转换成 plan PATCH。
+ * 目前只同步重命名与容器；结构性合并由 M2.5c 接管。
+ */
+function buildPlanPatch(trips: BigTripData[], planVersion: number) {
+  const renames: Array<{ trip_id: number; display_name: string }> = [];
+  const containers: Array<{ name: string; sub_trip_ids: number[] }> = [];
+
+  for (const big of trips) {
+    if (big.planTripId && big.displayName !== big.folder) {
+      renames.push({ trip_id: big.planTripId, display_name: big.displayName });
+    }
+    for (const sub of big.sub_trips) {
+      if (sub.planTripId && sub.displayName !== sub.folder) {
+        renames.push({ trip_id: sub.planTripId, display_name: sub.displayName });
+      }
+    }
+    for (const container of big.containers || []) {
+      const ids = container.subTripIndices
+        .map((i) => big.sub_trips[i]?.planTripId)
+        .filter((id): id is number => typeof id === "number");
+      if (ids.length > 0) {
+        containers.push({ name: container.displayName, sub_trip_ids: ids });
+      }
+    }
+  }
+
+  if (renames.length === 0 && containers.length === 0) return null;
+  return { plan_version: planVersion, renames, containers };
+}
+
 export default function ArchivePage() {
   const {
     tripStructure,
@@ -241,6 +275,9 @@ export default function ArchivePage() {
     tripType,
     archiveMode,
     setCurrentPage,
+    currentPlanId,
+    planVersion,
+    setPlanVersion,
   } = useAppStore();
 
   // 参数
@@ -276,26 +313,44 @@ export default function ArchivePage() {
     const overrides = buildTripOverrides(tripStructure);
 
     try {
-      const response = await fetch(`${API}/api/archive/execute`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          folder_path: sourceFolderPath,
-          output_path: outputFolderPath,
-          options: {
-            big_trip_threshold_days: settings.bigTripThresholdDays,
-            small_trip_threshold_hours: settings.smallTripThresholdHours,
-          },
+      let response: Response;
+      if (currentPlanId) {
+        // 先把本地重命名/容器同步到方案，再执行
+        const patch = buildPlanPatch(tripStructure, planVersion);
+        if (patch) {
+          const patched = await patchArchivePlan(currentPlanId, patch);
+          if (!patched.success) {
+            throw new Error(patched.error || "同步方案编辑失败");
+          }
+          setPlanVersion(patched.data.plan_version);
+        }
+        response = await executeArchivePlan(currentPlanId, {
           write_remarks: writeRemarks,
           remark_template: remarkTemplate,
-          trip_overrides: overrides,
-          trip_type: tripType,
-          archive_mode: archiveMode ?? "tree",
-          containers: (archiveMode === "rebuild" || archiveMode === "mixed")
-            ? buildContainersPayload(tripStructure)
-            : [],
-        }),
-      });
+        });
+      } else {
+        // 兼容：旧会话没有 planId 时走旧接口
+        response = await fetch(`${API}/api/archive/execute`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            folder_path: sourceFolderPath,
+            output_path: outputFolderPath,
+            options: {
+              big_trip_threshold_days: settings.bigTripThresholdDays,
+              small_trip_threshold_hours: settings.smallTripThresholdHours,
+            },
+            write_remarks: writeRemarks,
+            remark_template: remarkTemplate,
+            trip_overrides: overrides,
+            trip_type: tripType,
+            archive_mode: archiveMode ?? "tree",
+            containers: (archiveMode === "rebuild" || archiveMode === "mixed")
+              ? buildContainersPayload(tripStructure)
+              : [],
+          }),
+        });
+      }
 
       const reader = response.body!.getReader();
       const decoder = new TextDecoder();
@@ -338,7 +393,9 @@ export default function ArchivePage() {
                     });
                     const cleanupData = await cleanupRes.json();
                     if (cleanupData.success) {
-                      setCleanupResult({ deleted: cleanupData.deleted_count || 0 });
+                      setCleanupResult({
+                        deleted: cleanupData.deleted ?? cleanupData.deleted_count ?? 0,
+                      });
                     }
                   } catch (e) {
                     console.error("Cleanup 失败:", e);
@@ -634,9 +691,9 @@ export default function ArchivePage() {
           {lastProgress && (
             <div className="text-xs text-slate-400 font-mono truncate">
               📄 {lastProgress.file}
-              {lastProgress.target_folder && (
+              {(lastProgress.target_folder || lastProgress.target) && (
                 <span className="text-slate-500 ml-2">
-                  → {lastProgress.target_folder}
+                  → {lastProgress.target_folder || lastProgress.target}
                 </span>
               )}
             </div>
