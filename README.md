@@ -1,21 +1,24 @@
 # 旅迹 · TripTrace
 
-> 一款 Windows 桌面工具，用于智能整理旅行照片与视频，生成动态路径短视频。
+[![ci](https://github.com/vera-hlh/trip-trace/actions/workflows/ci.yml/badge.svg)](https://github.com/vera-hlh/trip-trace/actions/workflows/ci.yml)
+
+> 一款 Windows 桌面工具：把旅行照片/视频按行程智能归档，并生成可点击的交互式路径地图。
 
 ---
 
 ## 项目简介
 
-TripTrace 帮助你将存储在电脑中多年的旅行素材（照片和视频）按行程智能归档，并根据 GPS 轨迹生成动态路径展示。
+TripTrace 帮助你把多年积累的旅行素材按「行程 → 地点 → 景点」整理成有序文件夹，并可把地点信息写回照片/视频备注。v1.0 的交付范围是**稳定归档 + 交互式 HTML 地图 + 我的旅迹（含海报）**；MP4 导出安排在 v1.1。
 
 ### 核心功能
 
-- 🗂️ **智能归档** — 按旅行行程自动切分文件夹，支持地点回归检测
-- 📍 **地理位置解析** — 离线+在线两级逆地理编码，支持国内+国际
-- ✏️ **备注写入** — 将地点信息仅写入照片/视频的备注字段，不破坏其他元数据
-- 🗺️ **路径展示** — 生成交互式地图 HTML（可点击热点查看照片）
-- 🎬 **视频导出** — 可将路径展示导出为 MP4 视频用于分享
-- 🔒 **安全操作** — 默认"复制+预览"模式，用户确认后方可执行，支持撤销
+- 🗂️ **智能归档** — 按时间与地点切分大/子行程，支持地点回归、GPS 漂移过滤
+- 📍 **地理位置解析** — 离线库 + 高德 Web 服务（可选 Key），支持国内/境外/混合
+- ✏️ **备注写入** — 只写备注字段，不破坏拍摄时间等元数据
+- 🗺️ **交互式地图** — Folium HTML，城市热点 + 轨迹，点击热点查看照片
+- 📔 **我的旅迹** — 归档记录列表、分页、排序；海报生成（方案 A = Pillow 手绘）
+- 🎬 **视频导出** — MP4 合成排在 v1.1，不计入 v1.0
+- 🔒 **安全默认** — 默认复制 + 预览确认，不自动删除原文件
 
 ---
 
@@ -24,13 +27,13 @@ TripTrace 帮助你将存储在电脑中多年的旅行素材（照片和视频�
 | 层级 | 技术 |
 |---|---|
 | 桌面框架 | Electron + Node.js |
-| 前端 | React + TypeScript + Tailwind CSS |
-| 后端 | Python 3.10+ + FastAPI |
-| 数据库 | SQLite (via SQLAlchemy) |
-| 媒体处理 | Pillow, piexif, mutagen, ffmpeg-python, moviepy |
-| 地图生成 | Folium (交互式 HTML) |
-| 地理编码 | reverse_geocoder (国际离线) + fast-geocn (国内离线) + 高德地图 API (在线增强) |
-| 打包 | PyInstaller (Python) + Electron Builder |
+| 前端 | React 18 + TypeScript + Vite + Tailwind CSS + Zustand |
+| 后端 | Python 3.12 + FastAPI + SQLAlchemy async |
+| 数据库 | SQLite（aiosqlite） |
+| 媒体处理 | Pillow、piexif、mutagen（ffmpeg/moviepy 为 v1.1 预留） |
+| 地图生成 | Folium（交互式 HTML） |
+| 地理编码 | reverse_geocoder（国际离线）+ 高德 Web 服务（在线增强） |
+| 打包 | PyInstaller + electron-builder（v1.0 目标） |
 
 ---
 
@@ -44,12 +47,12 @@ trip-trace/
 ├── backend/           # Python FastAPI 后端
 │   └── app/
 │       ├── api/       # API 路由
-│       ├── core/      # 核心配置
-│       ├── models/    # 数据模型
-│       ├── services/  # 业务逻辑服务
+│       ├── core/      # 核心配置与数据库
+│       ├── models/    # SQLAlchemy 模型
+│       ├── services/  # 业务逻辑
 │       └── utils/     # 工具函数
 ├── docs/              # 项目文档
-└── scripts/           # 构建/开发辅助脚本
+└── scripts/           # 开发辅助脚本
 ```
 
 ---
@@ -58,48 +61,69 @@ trip-trace/
 
 ### 环境要求
 
-- Node.js 18+
-- Python 3.10+
-- FFmpeg（系统级安装）
+- Python 3.12+（开发环境为 3.12.9）
+- Node.js 20+
+- 可选：FFmpeg（仅 v1.1 视频导出需要）
 
-### 启动开发环境
+### 后端
 
-```bash
-# 1. 启动 Python 后端
+```powershell
 cd backend
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
-python -m uvicorn app.main:app --reload --port 17890
+# 需要跑测试时：
+pip install -r requirements-dev.txt
 
-# 2. 启动前端（新终端）
+.venv\Scripts\python.exe uvicorn_config.py
+```
+
+启动后访问 <http://127.0.0.1:17890/health>。
+
+### 前端
+
+```powershell
 cd frontend
-npm install
-npm run dev
+npm ci
+npm run dev            # Electron + Vite
+# 或只开浏览器渲染进程：
+npm run dev:renderer   # http://127.0.0.1:5173
+```
+
+### 测试
+
+```powershell
+cd backend
+.venv\Scripts\python.exe -m pytest tests -q
 ```
 
 ---
 
-## 文档目录
+## 文档
 
-- [技术架构文档](docs/architecture.md)
-- [开发路线图](docs/roadmap.md)
-- [API 接口设计](docs/api-design.md)
-- [智能归档算法](docs/archive-algorithm.md)
+- [2026-11-12 分析报告与实施计划](docs/2026-11-12-analysis-and-plan.md)（当前权威）
+- [项目总览（历史快照）](docs/project-overview.md)
+- [技术架构](docs/architecture.md)
+- [API 设计](docs/api-design.md)
 - [开发规范](docs/development-guide.md)
+- [开发路线图（历史）](docs/roadmap.md)
 - [更新日志](CHANGELOG.md)
 
 ---
 
 ## 开发状态
 
-🔄 **当前阶段**: Phase 4 - 功能强化（v0.8.0 进行中）
+**v0.8.0 原型 / v1.0 开发中**（最后代码提交：2026-07-13；2026-11 起恢复维护）
 
-| Phase | 内容 | 状态 |
+| 阶段 | 内容 | 状态 |
 |---|---|---|
 | Phase 1 | 项目初始化 | ✅ 完成 |
-| Phase 2 | 后端核心模块（90/90 测试）| ✅ 完成 |
+| Phase 2 | 后端核心模块（当前 103 项测试通过） | ✅ 完成 |
 | Phase 3 | 前端界面 + 高德 POI 集成 | ✅ 完成 |
-| Phase 4 | 功能强化（UI 打磨/POI审核/行程命名）| 🔄 进行中 |
-| Phase 5 | 多用户 SaaS | ⏸️ 等待触发条件 |
-| Phase 6 | 视频生成模块 | 📋 待规划 |
+| Phase 4 | 功能强化（POI 审核 / 行程命名 / 行程重建 / 我的旅迹） | ✅ 基本完成 |
+| Phase 5 | 多用户 SaaS | ⏸️ 搁置 |
+| Phase 6 | 视频生成 | 📋 v1.1 |
 
-详见 [开发路线图](docs/roadmap.md) 和 [交接文档](docs/handoff-phase3.md)
+v1.0 范围、里程碑与验收标准见 [实施计划](docs/2026-11-12-analysis-and-plan.md)。
+
+> 安全提示：高德 Key 只放本机 `backend/.env` 的 `TRIPRACE_GAODE_API_KEY`，不要提交到 Git 或写入文档。详见 [SECURITY.md](SECURITY.md)。
