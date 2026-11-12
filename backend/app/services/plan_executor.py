@@ -23,6 +23,32 @@ from app.services.remark_service import format_remark, write_remark
 
 logger = logging.getLogger(__name__)
 
+# 超过此大小的文件只校验 size，避免对超大视频做两次全量 SHA-256
+HASH_LIMIT_BYTES = 64 * 1024 * 1024
+
+
+def _sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _same_content(source: str, target: str) -> bool:
+    """size 必须一致；<=64MB 时再比较 SHA-256。"""
+    try:
+        source_size = os.path.getsize(source)
+        target_size = os.path.getsize(target)
+    except OSError:
+        return False
+    if source_size != target_size:
+        return False
+    if source_size <= HASH_LIMIT_BYTES:
+        return _sha256(source) == _sha256(target)
+    return True
+
+
 
 def source_snapshot(files: list) -> str:
     """文件集合指纹：路径 + size + mtime_ns。"""
@@ -162,16 +188,24 @@ async def run_plan(
                    "file": file_label, "message": pf.error}
             continue
 
+        created_target = False
         try:
             if os.path.exists(target):
-                skipped += 1
-                pf.status = "skipped"
-                yield {"type": "skip", "current": index, "total": total,
-                       "file": file_label, "reason": "already_exists"}
-                continue
+                if _same_content(media_file.original_path, target):
+                    skipped += 1
+                    pf.status = "skipped"
+                    yield {"type": "skip", "current": index, "total": total,
+                           "file": file_label, "reason": "identical"}
+                    continue
+                raise FileExistsError("目标已存在且内容不同，拒绝覆盖")
 
             os.makedirs(os.path.dirname(target), exist_ok=True)
+            created_target = True
             shutil.copy2(media_file.original_path, target)
+
+            if not _same_content(media_file.original_path, target):
+                raise IOError("复制校验失败：size/SHA-256 不一致")
+
             pf.status = "copied"
             media_file.current_path = target
             copied += 1
@@ -203,6 +237,11 @@ async def run_plan(
             yield {"type": "progress", "current": index, "total": total,
                    "file": file_label, "target": pf.target_rel_path}
         except Exception as exc:
+            if created_target and os.path.exists(target):
+                try:
+                    os.remove(target)
+                except OSError:
+                    logger.warning("清理未完成的目标文件失败: %s", target)
             errors += 1
             pf.status = "failed"
             pf.error = str(exc)

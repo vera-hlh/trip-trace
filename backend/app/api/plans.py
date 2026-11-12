@@ -31,6 +31,7 @@ from app.services.archive_service import (
     segment_into_trips,
 )
 from app.services.plan_executor import load_plan_media, run_plan, source_snapshot
+from app.services.plan_paths import build_target_rel_path
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -108,26 +109,34 @@ async def _plan_trip_map(db: AsyncSession, plan_id: int) -> dict[int, PlanTrip]:
     return {t.id: t for t in rows}
 
 
-async def _recompute_plan_paths(db: AsyncSession, plan_id: int) -> None:
-    """按当前树/容器重算所有 plan_files.target_rel_path。"""
-    trips = await _plan_trip_map(db, plan_id)
+async def _recompute_plan_paths(db: AsyncSession, plan: ArchivePlan) -> None:
+    """按当前树/容器重算所有 plan_files.target_rel_path。
+
+    保留源目录内的相对子路径；重命名/合并/容器后仍能避免同名覆盖。
+    """
+    trips = await _plan_trip_map(db, plan.id)
     bigs = {t.id: t for t in trips.values() if t.kind == "big"}
     subs = {t.id: t for t in trips.values() if t.kind == "sub"}
     plan_files = (
-        await db.execute(select(PlanFile).where(PlanFile.plan_id == plan_id))
+        await db.execute(
+            select(PlanFile)
+            .where(PlanFile.plan_id == plan.id)
+            .order_by(PlanFile.id)
+        )
     ).scalars().all()
 
     media_ids = [pf.media_file_id for pf in plan_files if pf.media_file_id]
-    media_names: dict[int, str] = {}
+    media_info: dict[int, tuple[str, str]] = {}
     if media_ids:
         rows = (
             await db.execute(
-                select(MediaFile.id, MediaFile.file_name)
+                select(MediaFile.id, MediaFile.file_name, MediaFile.original_path)
                 .where(MediaFile.id.in_(media_ids))
             )
         ).all()
-        media_names = {row[0]: row[1] for row in rows}
+        media_info = {row[0]: (row[1], row[2]) for row in rows}
 
+    used: set[str] = set()
     for pf in plan_files:
         sub = subs.get(pf.trip_id)
         if not sub or not sub.parent_id:
@@ -135,12 +144,17 @@ async def _recompute_plan_paths(db: AsyncSession, plan_id: int) -> None:
         big = bigs.get(sub.parent_id)
         if not big:
             continue
-        file_name = media_names.get(pf.media_file_id) or _basename(pf.target_rel_path)
-        parts = [big.folder_name]
-        if sub.container_name:
-            parts.append(sub.container_name)
-        parts.extend([sub.folder_name, file_name])
-        pf.target_rel_path = os.path.join(*parts)
+        file_name, original_path = media_info.get(pf.media_file_id, (None, ""))
+        file_name = file_name or _basename(pf.target_rel_path)
+        pf.target_rel_path = build_target_rel_path(
+            big.folder_name,
+            sub.folder_name,
+            original_path,
+            plan.source_folder,
+            file_name,
+            used,
+            sub.container_name or "",
+        )
 
 
 
@@ -171,8 +185,9 @@ async def build_plan_from_files(
     option_payload = options.model_dump()
     option_payload.pop("gaode_api_key", None)
 
+    source_root = os.path.normpath(source_folder)
     plan = ArchivePlan(
-        source_folder=os.path.normpath(source_folder),
+        source_folder=source_root,
         output_folder=os.path.normpath(output_folder),
         options_json=json.dumps(option_payload, ensure_ascii=False),
         status="draft",
@@ -184,6 +199,7 @@ async def build_plan_from_files(
     await db.flush()
 
     path_to_media_id = {f.original_path: f.id for f in db_files}
+    used_paths: set[str] = set()
     sub_count = 0
 
     for big_index, big in enumerate(big_trips):
@@ -221,8 +237,13 @@ async def build_plan_from_files(
                     plan_id=plan.id,
                     trip_id=sub_row.id,
                     media_file_id=path_to_media_id.get(item.file_path),
-                    target_rel_path=os.path.join(
-                        big.folder_name, sub.trip_name, item.file_name
+                    target_rel_path=build_target_rel_path(
+                        big.folder_name,
+                        sub.trip_name,
+                        item.file_path,
+                        source_root,
+                        item.file_name,
+                        used_paths,
                     ),
                     status="pending",
                 ))
@@ -379,7 +400,7 @@ async def patch_plan(
         plan.options_json = json.dumps(options, ensure_ascii=False)
 
     await db.flush()
-    await _recompute_plan_paths(db, plan_id)
+    await _recompute_plan_paths(db, plan)
     plan.plan_version += 1
     await db.commit()
 
