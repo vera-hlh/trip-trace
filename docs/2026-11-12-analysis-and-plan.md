@@ -205,7 +205,7 @@ Cline 里 agent 的方案原话是：
 | 行程 log 文档 | 06-17 | 已实现 |
 | 用户中心 / API 额度 / 管理后台 | 06-17 | 你同意先搁置（个人使用） |
 | Key 安全 / 云端代理 | 06-17 | 讨论过；Key 反而进了公开 handoff |
-| 虚拟合并 → 归档时真实合并 | 06-24 | **未实现**；M2 就是补它 |
+| 虚拟合并 → 归档时真实合并 | 06-24 | **已实现（M2，2026-11-13）** |
 | 行程重建（容器） | 06-24 / 07-01 | 已实现 |
 | 大行程合并（朋友照片） | 07-02 | UI 有；执行端不尊重，待修 |
 | 我的旅迹 + 海报 | 07-10 | 列表/详情有；海报方案 A 已定（07-13），未实现 |
@@ -306,6 +306,11 @@ M4/M5/M6 可在 M2 之后并行；M9 在 1.0 之后。
 
 ## 12. M2 的具体设计（最关键）
 
+> **实施状态（2026-11-13）**：M2.1–M2.6 已完成，端到端测试通过
+> （`backend/tests/test_plan_e2e.py`：生成 → 重命名/容器/大行程合并 → 执行 → 校验磁盘）。
+> 尚未实现：`DELETE` 方案、按时间拆分、执行幂等/只重试失败项、`planId` 跨重启持久化。
+> 旧 `preview` / `execute` 已标记 deprecated，保留到 M7 前删除。
+
 ### 12.1 表
 
 - `archive_plans`：`id, source_folder, output_folder, options_json, status(draft/executed/abandoned), plan_version, source_snapshot, created_at, executed_at`
@@ -316,24 +321,24 @@ M4/M5/M6 可在 M2 之后并行；M9 在 1.0 之后。
 
 - `POST /api/archive/plans`：生成方案
 - `GET /api/archive/plans/{id}`：读取完整树 + 文件
-- `PATCH /api/archive/plans/{id}`：重命名 / 合并 / 拆分 / 容器 / 模式
+- `PATCH /api/archive/plans/{id}`：重命名 / 合并 / 容器 / 模式（拆分未实现）
 - `POST /api/archive/plans/{id}/execute`：只消费方案，不重算
-- `DELETE /api/archive/plans/{id}`：放弃草稿
-- `preview` 保留为兼容层，内部调用 plan
+- `DELETE /api/archive/plans/{id}`：放弃草稿（未实现）
+- `preview`：已标记 deprecated，保留为旧会话回退
 
 ### 12.3 规则
 
 - 执行前校验 `source_snapshot`，不一致 409。
 - `plan_version` 乐观锁。
-- 执行幂等，支持“只重试失败项”。
-- 方案废弃保留审计记录。
+- 执行幂等、只重试失败项：**尚未实现**（当前失败项需重新生成方案）。
+- 方案废弃保留审计记录：**尚未实现**（`DELETE` 未做）。
 
 ### 12.4 前端
 
 - `appStore` 只保留 `currentPlanId`。
 - ScanPage / ArchivePage / TripRebuilderPage 读写同一 plan。
 - 编辑走 PATCH；失败回滚 UI。
-- 重启后从 plan 恢复，不依赖 localStorage 旧树。
+- 重启后从 plan 恢复：**尚未实现**（`planId/planVersion` 目前仅运行时保存）。
 
 ### 12.5 验收
 

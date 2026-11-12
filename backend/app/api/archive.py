@@ -264,12 +264,15 @@ def _build_trip_log_markdown(
 # 归档预览接口
 # ============================================================
 
-@router.post("/archive/preview")
+@router.post("/archive/preview", deprecated=True)
 async def archive_preview(
     request: ArchiveRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """预览归档方案（不执行任何文件操作）"""
+    """预览归档方案（不执行任何文件操作）
+
+    已弃用：新流程使用 POST /api/archive/plans；保留用于旧会话回退。
+    """
     if not os.path.isdir(request.folder_path):
         raise HTTPException(status_code=400, detail=f"文件夹不存在: {request.folder_path}")
 
@@ -360,13 +363,17 @@ async def archive_preview(
 # 归档执行接口（SSE 进度 + 写入日志 + 生成 trip_log.md）
 # ============================================================
 
-@router.post("/archive/execute")
+@router.post("/archive/execute", deprecated=True)
 async def archive_execute(
     request: ArchiveExecuteRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """
     执行归档（复制模式，不删除原文件）。
+
+    已弃用：新流程使用 POST /api/archive/plans/{id}/execute；
+    保留用于旧会话回退，M7 前删除。
+
     完成后：
       - 写入 ArchiveLog 操作记录（本地统计）
       - 在每个大行程文件夹生成 trip_log.md
