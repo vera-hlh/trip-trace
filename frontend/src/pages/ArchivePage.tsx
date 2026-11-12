@@ -390,13 +390,18 @@ export default function ArchivePage() {
                 setStep("done");
                 if (currentPlanId) setPlanExecuted(true);
 
-                // 若勾选了"删除原文件"且归档无错误，自动执行 cleanup
+                // 若勾选了"清理原文件"且归档无错误，自动移入回收站
                 if (deleteOriginals && finalStats.errors === 0) {
                   try {
                     const cleanupRes = await fetch(`${API}/api/archive/cleanup`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ source_folder: sourceFolderPath, confirm: true }),
+                      body: JSON.stringify({
+                        source_folder: sourceFolderPath,
+                        confirm: true,
+                        plan_id: currentPlanId,
+                        permanent: false,
+                      }),
                     });
                     const cleanupData = await cleanupRes.json();
                     if (cleanupData.success) {
@@ -527,7 +532,7 @@ export default function ArchivePage() {
               <div className="text-xs text-slate-500 mb-1">归档模式</div>
               <div className="flex items-center justify-between">
                 <div className={clsx("text-sm font-medium", deleteOriginals ? "text-red-400" : "text-emerald-400")}>
-                  {deleteOriginals ? "复制 + 删除原文件" : "复制模式（原文件保留）"}
+                  {deleteOriginals ? "复制 + 清理原文件" : "复制模式（原文件保留）"}
                 </div>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -536,7 +541,7 @@ export default function ArchivePage() {
                     onChange={(e) => setDeleteOriginals(e.target.checked)}
                     className="accent-red-500 w-4 h-4"
                   />
-                  <span className="text-xs text-slate-400">归档后删除原文件</span>
+                  <span className="text-xs text-slate-400">归档后将原文件移入回收站</span>
                 </label>
               </div>
               {deleteOriginals && (
@@ -622,7 +627,7 @@ export default function ArchivePage() {
             {planExecuted
               ? "该方案已执行"
               : deleteOriginals
-              ? "⚠️ 开始归档（含删除原文件）"
+              ? "⚠️ 开始归档（含清理原文件）"
               : "🚀 开始归档"}
           </button>
         </div>
@@ -634,15 +639,15 @@ export default function ArchivePage() {
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl space-y-4">
             {deleteOriginals ? (
               <>
-                <h3 className="text-lg font-bold text-red-400">⚠️ 危险操作确认</h3>
+                <h3 className="text-lg font-bold text-amber-400">⚠️ 清理原文件确认</h3>
                 <p className="text-sm text-slate-300 leading-relaxed">
-                  归档完成后将<strong className="text-red-400">永久删除</strong>源文件夹中所有媒体文件：
+                  归档完成后将把源文件夹中的媒体文件<strong className="text-amber-400">移入回收站</strong>：
                 </p>
                 <div className="text-xs text-slate-400 font-mono bg-slate-900/60 rounded-lg px-3 py-2 break-all">
                   {sourceFolderPath}
                 </div>
-                <p className="text-xs text-red-300/80">
-                  此操作<strong>不可撤销</strong>。请确认归档输出目录已正确且可访问，再继续。
+                <p className="text-xs text-amber-300/80">
+                  可从回收站恢复。请确认归档输出目录已正确且可访问，再继续。
                 </p>
                 <div className="flex gap-3">
                   <button
@@ -653,9 +658,9 @@ export default function ArchivePage() {
                   </button>
                   <button
                     onClick={() => { setShowConfirmModal(false); handleExecute(); }}
-                    className="flex-1 py-2 bg-red-700 hover:bg-red-600 rounded-xl text-sm text-white font-medium transition-all"
+                    className="flex-1 py-2 bg-amber-700 hover:bg-amber-600 rounded-xl text-sm text-white font-medium transition-all"
                   >
-                    确认删除原文件
+                    确认移入回收站
                   </button>
                 </div>
               </>
@@ -667,7 +672,7 @@ export default function ArchivePage() {
                   会<strong>占据双倍存储空间</strong>。
                 </p>
                 <p className="text-xs text-slate-400">
-                  确认归档成功后，你可以在参数中勾选"归档后删除原文件"并重新归档，或自行手动删除。
+                  确认归档成功后，你可以在参数中勾选"归档后清理原文件"并重新归档，或自行手动处理。
                 </p>
                 <div className="flex gap-3">
                   <button
@@ -770,17 +775,17 @@ export default function ArchivePage() {
               📂 输出目录：{stats.outputPath}
             </div>
 
-            {/* 删除原文件结果（若已执行 cleanup）*/}
+            {/* 清理原文件结果（若已执行 cleanup）*/}
             {deleteOriginals && (
               <div className={clsx(
                 "mt-4 p-3 rounded-lg text-xs",
                 cleanupResult
-                  ? "bg-red-900/20 border border-red-700/40 text-red-300"
+                  ? "bg-amber-900/20 border border-amber-700/40 text-amber-300"
                   : "bg-slate-800/60 border border-slate-700/40 text-slate-400 animate-pulse"
               )}>
                 {cleanupResult
-                  ? `🗑️ 已删除原文件 ${cleanupResult.deleted} 个（源文件夹已清理）`
-                  : "⏳ 正在删除原文件..."}
+                  ? `🗑️ 已移入回收站 ${cleanupResult.deleted} 个（可从回收站恢复）`
+                  : "⏳ 正在移入回收站..."}
               </div>
             )}
 

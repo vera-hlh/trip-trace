@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.models.archive_plan import ArchivePlan, PlanFile
 from app.models.file import MediaFile
 from app.services.archive_service import (
     ArchiveConfig,
@@ -32,6 +33,11 @@ from app.services.archive_service import (
     generate_archive_preview,
     infer_location_for_gps_less,
 )
+
+try:
+    from send2trash import send2trash as _recycle
+except ImportError:  # pragma: no cover - requirements 已包含，防御性兜底
+    _recycle = None
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -94,8 +100,10 @@ class ArchiveExecuteRequest(BaseModel):
 
 
 class CleanupRequest(BaseModel):
-    source_folder: str
+    source_folder: str = ""
     confirm: bool = False
+    plan_id: int | None = None
+    permanent: bool = False      # 默认进回收站；true 才永久删除
 
 
 # ============================================================
@@ -813,27 +821,88 @@ async def write_remarks(body: dict, db: AsyncSession = Depends(get_db)):
 # 清理原文件接口
 # ============================================================
 
+def _delete_original_file(file: MediaFile, permanent: bool) -> str:
+    """删除前的安全校验；返回状态字符串。"""
+    if not file.current_path or file.current_path == file.original_path:
+        return "skipped"
+    if not os.path.exists(file.original_path):
+        return "missing_source"
+    if not os.path.exists(file.current_path):
+        return "missing_target"
+    try:
+        if os.path.getsize(file.current_path) != os.path.getsize(file.original_path):
+            return "size_mismatch"
+    except OSError:
+        return "stat_error"
+
+    if permanent:
+        os.remove(file.original_path)
+    else:
+        if _recycle is None:
+            return "recycle_unavailable"
+        _recycle(file.original_path)
+    return "deleted"
+
+
 @router.post("/archive/cleanup")
 async def archive_cleanup(
     request: CleanupRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """删除原始文件（需用户显式确认 confirm=True）"""
+    """删除原始文件（需 confirm=True）。
+
+    默认移入回收站；permanent=True 才永久删除。
+    指定 plan_id 时只删除该方案中 status=copied 的源文件，并校验目标存在且 size 一致。
+    """
     if not request.confirm:
         raise HTTPException(status_code=400, detail="请设置 confirm=true 确认删除操作")
 
-    db_files = await _load_db_files(db, request.source_folder)
-    deleted = 0
-    errors = 0
+    if request.plan_id is not None:
+        plan = (
+            await db.execute(select(ArchivePlan).where(ArchivePlan.id == request.plan_id))
+        ).scalar_one_or_none()
+        if not plan:
+            raise HTTPException(status_code=404, detail=f"方案不存在: {request.plan_id}")
+        if plan.status != "executed":
+            raise HTTPException(status_code=400, detail="方案尚未执行，不能清理源文件")
+        if request.source_folder and os.path.normpath(request.source_folder) != plan.source_folder:
+            raise HTTPException(status_code=400, detail="source_folder 与方案不一致")
+        db_files = (
+            await db.execute(
+                select(MediaFile)
+                .join(PlanFile, PlanFile.media_file_id == MediaFile.id)
+                .where(
+                    PlanFile.plan_id == plan.id,
+                    PlanFile.status == "copied",
+                )
+            )
+        ).scalars().all()
+    else:
+        if not request.source_folder:
+            raise HTTPException(status_code=400, detail="缺少 source_folder 或 plan_id")
+        db_files = await _load_db_files(db, request.source_folder)
 
+    deleted = errors = skipped = 0
     for f in db_files:
-        if f.current_path and f.current_path != f.original_path:
-            try:
-                if os.path.exists(f.original_path):
-                    os.remove(f.original_path)
-                    deleted += 1
-            except Exception as e:
-                errors += 1
-                logger.warning(f"删除原文件失败 {f.original_path}: {e}")
+        try:
+            status = _delete_original_file(f, request.permanent)
+        except Exception as e:
+            status = "error"
+            logger.warning("删除原文件失败 %s: %s", f.original_path, e)
 
-    return {"success": True, "deleted": deleted, "errors": errors}
+        if status == "deleted":
+            deleted += 1
+        elif status in ("skipped", "missing_source"):
+            skipped += 1
+        else:
+            errors += 1
+            logger.warning("跳过删除 %s: %s", f.original_path, status)
+
+    return {
+        "success": True,
+        "deleted": deleted,
+        "errors": errors,
+        "skipped": skipped,
+        "plan_id": request.plan_id,
+        "mode": "permanent" if request.permanent else "recycle",
+    }
