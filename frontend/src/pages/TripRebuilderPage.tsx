@@ -19,6 +19,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import type { TripContainer, ArchiveMode, BigTripData } from "@/store/appStore";
+import { patchArchivePlan } from "@/api/backend";
 import clsx from "clsx";
 
 const API = "http://localhost:17890";
@@ -211,6 +212,9 @@ export default function TripRebuilderPage() {
   const [thumbsOpen, setThumbsOpen] = useState<Set<string>>(new Set());
   // 容器重命名状态
   const moveMenuRef = useRef<HTMLDivElement>(null);
+  // 方案同步状态（PATCH 失败时提示）
+  const [syncError, setSyncError] = useState("");
+  const patchQueue = useRef<Promise<void>>(Promise.resolve());
 
   // 点击外部关闭移入下拉
   useEffect(() => {
@@ -248,8 +252,57 @@ export default function TripRebuilderPage() {
   const getContainers = (bigIdx: number): TripContainer[] =>
     tripStructure[bigIdx]?.containers || [];
 
-  const setContainers = (bigIdx: number, containers: TripContainer[]) =>
+  /**
+   * 把某个大行程的完整容器分配同步到方案。
+   * 未分配的子行程用空 name 分组，从而清空旧容器。
+   */
+  const syncContainersToPlan = async (
+    bigIdx: number,
+    containers: TripContainer[]
+  ) => {
+    const state = useAppStore.getState();
+    const planId = state.currentPlanId;
+    const big = state.tripStructure?.[bigIdx];
+    if (!planId || !big) return;
+
+    const assigned = new Map<number, string>();
+    for (const container of containers) {
+      for (const idx of container.subTripIndices) {
+        const pid = big.sub_trips[idx]?.planTripId;
+        if (pid) assigned.set(pid, container.displayName);
+      }
+    }
+
+    const groups = new Map<string, number[]>();
+    for (const sub of big.sub_trips) {
+      if (!sub.planTripId) continue;
+      const name = assigned.get(sub.planTripId) || "";
+      if (!groups.has(name)) groups.set(name, []);
+      groups.get(name)!.push(sub.planTripId);
+    }
+    const payload = Array.from(groups.entries()).map(([name, ids]) => ({
+      name,
+      sub_trip_ids: ids,
+    }));
+    if (payload.length === 0) return;
+
+    const res = await patchArchivePlan(planId, {
+      plan_version: state.planVersion,
+      containers: payload,
+    });
+    useAppStore.getState().setPlanVersion(res.data.plan_version);
+    setSyncError("");
+  };
+
+  const setContainers = (bigIdx: number, containers: TripContainer[]) => {
     updateBigTripContainers(bigIdx, containers);
+    if (!useAppStore.getState().currentPlanId) return;
+    patchQueue.current = patchQueue.current
+      .then(() => syncContainersToPlan(bigIdx, containers))
+      .catch((e) => {
+        setSyncError(String(e));
+      });
+  };
 
   /** subTripIndex -> containerDisplayName（若已分配） */
   const getAssignedMap = (bigIdx: number): Map<number, string> => {
@@ -367,10 +420,26 @@ export default function TripRebuilderPage() {
   const [mergeTgtIdx, setMergeTgtIdx] = useState<number>(0);  // 默认合并进第一个
   const [showMergeConfirm, setShowMergeConfirm] = useState(false);
 
-  const handleMergeBigTrips = () => {
+  const handleMergeBigTrips = async () => {
     if (!tripStructure || mergeSrcIdx === mergeTgtIdx) return;
     const source = tripStructure[mergeSrcIdx];
     const target = tripStructure[mergeTgtIdx];
+
+    const state = useAppStore.getState();
+    if (state.currentPlanId && source.planTripId && target.planTripId) {
+      try {
+        const res = await patchArchivePlan(state.currentPlanId, {
+          plan_version: state.planVersion,
+          merges: [
+            { source_ids: [source.planTripId], target_id: target.planTripId },
+          ],
+        });
+        useAppStore.getState().setPlanVersion(res.data.plan_version);
+      } catch (e) {
+        setSyncError(`大行程合并失败: ${e}`);
+        return;
+      }
+    }
 
     // 将源大行程的子行程追加到目标大行程
     const mergedTarget: BigTripData = {
@@ -400,6 +469,7 @@ export default function TripRebuilderPage() {
     setShowMergeConfirm(false);
     setMergeSrcIdx(1);
     setMergeTgtIdx(0);
+    setSyncError("");
   };
 
   // 验证能否前往归档
@@ -417,6 +487,12 @@ export default function TripRebuilderPage() {
           将子行程分组到容器中，生成额外目录层级（可选）· 右侧选择归档模式后前往归档
         </p>
       </div>
+
+      {syncError && (
+        <div className="mb-3 p-3 bg-red-900/20 border border-red-700/40 rounded-xl text-xs text-red-300">
+          方案同步失败：{syncError}
+        </div>
+      )}
 
       {/* 3:1 双栏主体 */}
       <div className="grid grid-cols-4 gap-4 items-start">

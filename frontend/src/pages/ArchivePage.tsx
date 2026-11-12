@@ -278,6 +278,8 @@ export default function ArchivePage() {
     currentPlanId,
     planVersion,
     setPlanVersion,
+    planExecuted,
+    setPlanExecuted,
   } = useAppStore();
 
   // 参数
@@ -305,6 +307,10 @@ export default function ArchivePage() {
 
   const handleExecute = async () => {
     if (!sourceFolderPath || !outputFolderPath || !tripStructure) return;
+    if (planExecuted) {
+      setEvents([{ type: "fatal_error", message: "该方案已执行；如需再次归档，请回扫描页重新生成方案。" }]);
+      return;
+    }
 
     setStep("executing");
     setEvents([]);
@@ -382,6 +388,7 @@ export default function ArchivePage() {
                 };
                 setStats(finalStats);
                 setStep("done");
+                if (currentPlanId) setPlanExecuted(true);
 
                 // 若勾选了"删除原文件"且归档无错误，自动执行 cleanup
                 if (deleteOriginals && finalStats.errors === 0) {
@@ -460,13 +467,22 @@ export default function ArchivePage() {
         </div>
         {step === "done" && (
           <button
-            onClick={() => setStep("review")}
+            onClick={() => {
+              if (planExecuted) setCurrentPage("scan");
+              else setStep("review");
+            }}
             className="flex-shrink-0 text-xs text-slate-500 hover:text-slate-300 border border-slate-700 px-3 py-1.5 rounded-lg transition-colors"
           >
-            🔄 重新归档
+            {planExecuted ? "🔄 重新生成方案" : "🔄 重新归档"}
           </button>
         )}
       </div>
+
+      {planExecuted && step !== "done" && (
+        <div className="p-3 bg-amber-900/20 border border-amber-700/40 rounded-xl text-xs text-amber-300">
+          该方案已执行。如需再次归档，请返回「扫描」页面重新生成方案。
+        </div>
+      )}
 
       {/* ── 审阅行程树 ────────────────────────────────────── */}
       {step !== "done" && (
@@ -476,14 +492,14 @@ export default function ArchivePage() {
           </h2>
           <TripPreview trips={tripStructure} />
           <p className="text-xs text-slate-500">
-            如需修改行程名称或合并子行程，请返回{" "}
+            如需修改行程名称或调整容器，请返回{" "}
             <button
               onClick={() => setCurrentPage("scan")}
               className="text-blue-400 hover:underline"
             >
               扫描页面
             </button>{" "}
-            编辑后再来这里。
+            或「行程重建」编辑后再来这里。
           </p>
         </div>
       )}
@@ -592,18 +608,22 @@ export default function ArchivePage() {
           </label>
 
           <button
-            onClick={() => confirmed && setShowConfirmModal(true)}
-            disabled={!confirmed}
+            onClick={() => confirmed && !planExecuted && setShowConfirmModal(true)}
+            disabled={!confirmed || planExecuted}
             className={clsx(
               "w-full py-3 rounded-xl font-medium text-sm transition-all",
-              confirmed
+              confirmed && !planExecuted
                 ? deleteOriginals
                   ? "bg-red-700 hover:bg-red-600 text-white shadow-lg shadow-red-500/20"
                   : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-500/20"
                 : "bg-slate-800 text-slate-500 cursor-not-allowed"
             )}
           >
-            {deleteOriginals ? "⚠️ 开始归档（含删除原文件）" : "🚀 开始归档"}
+            {planExecuted
+              ? "该方案已执行"
+              : deleteOriginals
+              ? "⚠️ 开始归档（含删除原文件）"
+              : "🚀 开始归档"}
           </button>
         </div>
       )}

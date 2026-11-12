@@ -9,8 +9,8 @@
  */
 import { useState, useRef, useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
-import type { BigTripData, SubTripData } from "@/store/appStore";
-import { createArchivePlan, getArchivePlan } from "@/api/backend";
+import type { BigTripData } from "@/store/appStore";
+import { createArchivePlan, getArchivePlan, patchArchivePlan } from "@/api/backend";
 import clsx from "clsx";
 
 const API = "http://localhost:17890";
@@ -336,12 +336,10 @@ function TripTree({
   trips,
   onRenameBig,
   onRenameSub,
-  onMergeSub,
 }: {
   trips: BigTripData[];
   onRenameBig: (bi: number, name: string) => void;
   onRenameSub: (bi: number, si: number, name: string) => void;
-  onMergeSub: (bi: number, si: number) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   // 展开缩略图预览的子行程 key 集合（格式："bi-si"）
@@ -512,6 +510,7 @@ export default function ScanPage() {
     setTripType,
     setCurrentPlanId,
     setPlanVersion,
+    setPlanExecuted,
   } = useAppStore();
 
   // 流程步骤
@@ -882,6 +881,7 @@ export default function ScanPage() {
       const { plan, trips_structure, files } = detail.data;
       setCurrentPlanId(planId);
       setPlanVersion(plan.plan_version);
+      setPlanExecuted(false);
 
       // 按子行程 id 归组文件，供缩略图预览
       const fileMap = new Map<number, Array<{ name: string; path: string }>>();
@@ -934,65 +934,64 @@ export default function ScanPage() {
 
   // ── 行程编辑 ───────────────────────────────────────────────
 
+  const renameTrip = async (
+    tripId: number | undefined,
+    name: string,
+    applyLocal: () => void
+  ) => {
+    const planId = useAppStore.getState().currentPlanId;
+    if (!planId || !tripId) {
+      applyLocal();
+      addLog(`重命名 → "${name}"（仅本地）`);
+      return;
+    }
+    try {
+      const version = useAppStore.getState().planVersion;
+      const res = await patchArchivePlan(planId, {
+        plan_version: version,
+        renames: [{ trip_id: tripId, display_name: name }],
+      });
+      useAppStore.getState().setPlanVersion(res.data.plan_version);
+      applyLocal();
+      addLog(`重命名 → "${name}"（已保存 plan v${res.data.plan_version}）`);
+    } catch (e) {
+      addLog(`重命名失败: ${e}`);
+    }
+  };
+
   const handleRenameBig = (bi: number, name: string) => {
-    if (!tripStructure) return;
-    setTripStructure(
-      tripStructure.map((big, i) =>
-        i === bi ? { ...big, displayName: name } : big
-      )
-    );
-    addLog(`重命名大行程 → "${name}"`);
+    const big = useAppStore.getState().tripStructure?.[bi];
+    if (!big) return;
+    void renameTrip(big.planTripId, name, () => {
+      const current = useAppStore.getState().tripStructure;
+      if (!current) return;
+      setTripStructure(
+        current.map((item, i) =>
+          i === bi ? { ...item, folder: name, displayName: name } : item
+        )
+      );
+    });
   };
 
   const handleRenameSub = (bi: number, si: number, name: string) => {
-    if (!tripStructure) return;
-    setTripStructure(
-      tripStructure.map((big, i) =>
-        i !== bi
-          ? big
-          : {
-              ...big,
-              sub_trips: big.sub_trips.map((sub, j) =>
-                j === si ? { ...sub, displayName: name } : sub
-              ),
-            }
-      )
-    );
-    addLog(`重命名子行程 → "${name}"`);
-  };
-
-  const handleMergeSub = (bi: number, si: number) => {
-    if (!tripStructure) return;
-    const big = tripStructure[bi];
-    if (si >= big.sub_trips.length - 1) return;
-
-    const a = big.sub_trips[si];
-    const b = big.sub_trips[si + 1];
-
-    const merged: SubTripData = {
-      folder: a.folder,
-      displayName: `${a.displayName} + ${b.displayName}`,
-      location: [a.location, b.location].filter(Boolean).join(" / "),
-      start_date: a.start_date,
-      end_date: b.end_date,
-      file_count: a.file_count + b.file_count,
-    };
-
-    setTripStructure(
-      tripStructure.map((bt, i) =>
-        i !== bi
-          ? bt
-          : {
-              ...bt,
-              sub_trips: [
-                ...bt.sub_trips.slice(0, si),
-                merged,
-                ...bt.sub_trips.slice(si + 2),
-              ],
-            }
-      )
-    );
-    addLog(`合并子行程：「${a.displayName}」+「${b.displayName}」`);
+    const sub = useAppStore.getState().tripStructure?.[bi]?.sub_trips?.[si];
+    if (!sub) return;
+    void renameTrip(sub.planTripId, name, () => {
+      const current = useAppStore.getState().tripStructure;
+      if (!current) return;
+      setTripStructure(
+        current.map((big, i) =>
+          i !== bi
+            ? big
+            : {
+                ...big,
+                sub_trips: big.sub_trips.map((item, j) =>
+                  j === si ? { ...item, folder: name, displayName: name } : item
+                ),
+              }
+        )
+      );
+    });
   };
 
   // ── 重置 ───────────────────────────────────────────────────
@@ -1007,6 +1006,7 @@ export default function ScanPage() {
     setTripStructure(null);
     setCurrentPlanId(null);
     setPlanVersion(0);
+    setPlanExecuted(false);
     setLogs([]);
   };
 
@@ -1686,7 +1686,6 @@ export default function ScanPage() {
             trips={tripStructure}
             onRenameBig={handleRenameBig}
             onRenameSub={handleRenameSub}
-            onMergeSub={handleMergeSub}
           />
 
           {/* 下一步按钮：在行程树下方，用户看完行程树后自然点击 */}

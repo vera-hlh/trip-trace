@@ -89,6 +89,8 @@ interface AppState {
   setCurrentPlanId: (id: number | null) => void;
   planVersion: number;
   setPlanVersion: (version: number) => void;
+  planExecuted: boolean;
+  setPlanExecuted: (executed: boolean) => void;
 
   // 行程类型（持久化 - 影响地理编码策略和异常文件处理）
   tripType: "domestic" | "abroad" | "mixed";
@@ -144,6 +146,8 @@ export const useAppStore = create<AppState>()(
       setCurrentPlanId: (id) => set({ currentPlanId: id }),
       planVersion: 0,
       setPlanVersion: (version) => set({ planVersion: version }),
+      planExecuted: false,
+      setPlanExecuted: (executed) => set({ planExecuted: executed }),
 
       // 行程类型
       tripType: "domestic" as const,
