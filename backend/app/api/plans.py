@@ -12,6 +12,7 @@ import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +36,34 @@ router = APIRouter()
 
 
 # ============================================================
+# 请求模型
+# ============================================================
+
+class TripRename(BaseModel):
+    trip_id: int
+    display_name: str
+
+
+class TripMerge(BaseModel):
+    source_ids: list[int]
+    target_id: int
+
+
+class ContainerGroup(BaseModel):
+    name: str
+    sub_trip_ids: list[int]
+
+
+class PlanPatchRequest(BaseModel):
+    plan_version: int
+    renames: list[TripRename] = []
+    merges: list[TripMerge] = []
+    containers: list[ContainerGroup] = []
+    archive_mode: str | None = None
+
+
+
+# ============================================================
 # 内部工具
 # ============================================================
 
@@ -54,6 +83,69 @@ def _source_snapshot(db_files: list) -> str:
 
 def _iso(value) -> str | None:
     return value.isoformat() if value else None
+
+
+_ALLOWED_MODES = {"tree", "rebuild", "mixed"}
+
+
+def _clean_name(value: str, field: str) -> str:
+    """基础目录名校验；完整的 Windows 非法字符策略在 M3 统一处理。"""
+    name = (value or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail=f"{field} 不能为空")
+    if name in (".", "..") or any(ch in name for ch in '<>:"/\\|?*'):
+        raise HTTPException(status_code=400, detail=f"{field} 含非法字符: {name}")
+    if len(name) > 120:
+        raise HTTPException(status_code=400, detail=f"{field} 过长（>120 字符）")
+    return name
+
+
+def _basename(path: str) -> str:
+    """兼容 Windows/Unix 分隔符，从目标路径取文件名。"""
+    return (path or "").replace("\\", "/").rstrip("/").split("/")[-1] or "file"
+
+
+async def _plan_trip_map(db: AsyncSession, plan_id: int) -> dict[int, PlanTrip]:
+    rows = (
+        await db.execute(select(PlanTrip).where(PlanTrip.plan_id == plan_id))
+    ).scalars().all()
+    return {t.id: t for t in rows}
+
+
+async def _recompute_plan_paths(db: AsyncSession, plan_id: int) -> None:
+    """按当前树/容器重算所有 plan_files.target_rel_path。"""
+    trips = await _plan_trip_map(db, plan_id)
+    bigs = {t.id: t for t in trips.values() if t.kind == "big"}
+    subs = {t.id: t for t in trips.values() if t.kind == "sub"}
+    plan_files = (
+        await db.execute(select(PlanFile).where(PlanFile.plan_id == plan_id))
+    ).scalars().all()
+
+    media_ids = [pf.media_file_id for pf in plan_files if pf.media_file_id]
+    media_names: dict[int, str] = {}
+    if media_ids:
+        rows = (
+            await db.execute(
+                select(MediaFile.id, MediaFile.file_name)
+                .where(MediaFile.id.in_(media_ids))
+            )
+        ).all()
+        media_names = {row[0]: row[1] for row in rows}
+
+    for pf in plan_files:
+        sub = subs.get(pf.trip_id)
+        if not sub or not sub.parent_id:
+            continue
+        big = bigs.get(sub.parent_id)
+        if not big:
+            continue
+        file_name = media_names.get(pf.media_file_id) or _basename(pf.target_rel_path)
+        parts = [big.folder_name]
+        if sub.container_name:
+            parts.append(sub.container_name)
+        parts.extend([sub.folder_name, file_name])
+        pf.target_rel_path = os.path.join(*parts)
+
 
 
 async def build_plan_from_files(
@@ -183,6 +275,124 @@ async def create_plan(
             "big_trips": big_count,
             "sub_trips": sub_count,
             "files": len(db_files),
+        },
+    }
+
+
+@router.patch("/archive/plans/{plan_id}")
+async def patch_plan(
+    plan_id: int,
+    body: PlanPatchRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """编辑 draft 方案：重命名、合并、容器、归档模式。
+
+    顺序：先 renames，再 merges，最后 containers / archive_mode。
+    使用 plan_version 做乐观锁；冲突返回 409。
+    """
+    plan = (
+        await db.execute(select(ArchivePlan).where(ArchivePlan.id == plan_id))
+    ).scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail=f"方案不存在: {plan_id}")
+    if plan.status != "draft":
+        raise HTTPException(status_code=409, detail="只能编辑 draft 方案")
+    if plan.plan_version != body.plan_version:
+        raise HTTPException(
+            status_code=409,
+            detail=f"方案版本冲突：期望 {body.plan_version}，当前 {plan.plan_version}",
+        )
+
+    trips = await _plan_trip_map(db, plan_id)
+
+    # 1. 重命名（同时改实际目录名，保证方案自包含）
+    for item in body.renames:
+        trip = trips.get(item.trip_id)
+        if not trip:
+            raise HTTPException(status_code=400, detail=f"行程不存在: {item.trip_id}")
+        name = _clean_name(item.display_name, "display_name")
+        trip.display_name = name
+        trip.folder_name = name
+
+    # 2. 合并
+    for merge in body.merges:
+        if not merge.source_ids:
+            raise HTTPException(status_code=400, detail="source_ids 不能为空")
+        if merge.target_id in merge.source_ids:
+            raise HTTPException(status_code=400, detail="target_id 不能出现在 source_ids 中")
+        target = trips.get(merge.target_id)
+        if not target:
+            raise HTTPException(status_code=400, detail=f"目标行程不存在: {merge.target_id}")
+
+        for source_id in merge.source_ids:
+            source = trips.get(source_id)
+            if not source:
+                raise HTTPException(status_code=400, detail=f"源行程不存在: {source_id}")
+            if source.kind != target.kind:
+                raise HTTPException(status_code=400, detail="只能合并同类型行程")
+            if target.kind == "sub" and source.parent_id != target.parent_id:
+                raise HTTPException(status_code=400, detail="子行程只能在同一大行程内合并")
+
+            if target.kind == "big":
+                # 大行程合并：把源大行程的子行程迁到目标大行程
+                for t in trips.values():
+                    if t.kind == "sub" and t.parent_id == source.id:
+                        t.parent_id = target.id
+                await db.flush()
+            else:
+                # 子行程合并：把源子行程的文件迁到目标子行程
+                source_files = (
+                    await db.execute(
+                        select(PlanFile).where(
+                            PlanFile.plan_id == plan_id,
+                            PlanFile.trip_id == source.id,
+                        )
+                    )
+                ).scalars().all()
+                for pf in source_files:
+                    pf.trip_id = target.id
+                await db.flush()
+
+            await db.delete(source)
+            trips.pop(source_id, None)
+
+    # 3. 容器分组（空 name 表示移出容器）
+    assigned: set[int] = set()
+    for group in body.containers:
+        container_name = (
+            _clean_name(group.name, "container_name") if group.name.strip() else None
+        )
+        for sub_id in group.sub_trip_ids:
+            sub = trips.get(sub_id)
+            if not sub or sub.kind != "sub":
+                raise HTTPException(status_code=400, detail=f"子行程不存在: {sub_id}")
+            if sub_id in assigned:
+                raise HTTPException(status_code=400, detail=f"子行程重复分配: {sub_id}")
+            assigned.add(sub_id)
+            sub.container_name = container_name
+
+    # 4. 归档模式（写入 options_json）
+    if body.archive_mode is not None:
+        if body.archive_mode not in _ALLOWED_MODES:
+            raise HTTPException(status_code=400, detail=f"未知归档模式: {body.archive_mode}")
+        try:
+            options = json.loads(plan.options_json) if plan.options_json else {}
+        except json.JSONDecodeError:
+            options = {}
+        options["archive_mode"] = body.archive_mode
+        plan.options_json = json.dumps(options, ensure_ascii=False)
+
+    await db.flush()
+    await _recompute_plan_paths(db, plan_id)
+    plan.plan_version += 1
+    await db.commit()
+
+    return {
+        "success": True,
+        "data": {
+            "plan_id": plan.id,
+            "plan_version": plan.plan_version,
+            "status": plan.status,
         },
     }
 
