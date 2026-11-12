@@ -5,13 +5,13 @@
 
 执行仍由 /api/archive/execute 负责；M2.4 会改为消费 plan_id。
 """
-import hashlib
 import json
 import logging
 import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +30,7 @@ from app.services.archive_service import (
     infer_location_for_gps_less,
     segment_into_trips,
 )
+from app.services.plan_executor import load_plan_media, run_plan, source_snapshot
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -62,24 +63,15 @@ class PlanPatchRequest(BaseModel):
     archive_mode: str | None = None
 
 
+class PlanExecuteRequest(BaseModel):
+    write_remarks: bool = False
+    remark_template: str = "地点: {country}/{province}/{city}/{poi}"
+
+
 
 # ============================================================
 # 内部工具
 # ============================================================
-
-def _source_snapshot(db_files: list) -> str:
-    """文件集合指纹：路径 + size + mtime_ns，用于检测预览后源目录变化。"""
-    digest = hashlib.sha256()
-    for f in sorted(db_files, key=lambda x: x.original_path):
-        try:
-            stat = os.stat(f.original_path)
-            signature = f"{f.original_path}|{stat.st_size}|{stat.st_mtime_ns}"
-        except OSError:
-            signature = f"{f.original_path}|missing"
-        digest.update(signature.encode("utf-8"))
-        digest.update(b"\n")
-    return digest.hexdigest()
-
 
 def _iso(value) -> str | None:
     return value.isoformat() if value else None
@@ -103,6 +95,10 @@ def _clean_name(value: str, field: str) -> str:
 def _basename(path: str) -> str:
     """兼容 Windows/Unix 分隔符，从目标路径取文件名。"""
     return (path or "").replace("\\", "/").rstrip("/").split("/")[-1] or "file"
+
+
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
 
 async def _plan_trip_map(db: AsyncSession, plan_id: int) -> dict[int, PlanTrip]:
@@ -181,7 +177,7 @@ async def build_plan_from_files(
         options_json=json.dumps(option_payload, ensure_ascii=False),
         status="draft",
         plan_version=1,
-        source_snapshot=_source_snapshot(db_files),
+        source_snapshot=source_snapshot(db_files),
         created_at=datetime.now().isoformat(timespec="seconds"),
     )
     db.add(plan)
@@ -395,6 +391,55 @@ async def patch_plan(
             "status": plan.status,
         },
     }
+
+
+@router.post("/archive/plans/{plan_id}/execute")
+async def execute_plan(
+    plan_id: int,
+    body: PlanExecuteRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """执行 draft 方案（SSE 进度）。
+
+    - 只消费 plan 数据，不再重算切分；
+    - 执行前校验 source_snapshot，源目录变化返回 409。
+    """
+    plan = (
+        await db.execute(select(ArchivePlan).where(ArchivePlan.id == plan_id))
+    ).scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail=f"方案不存在: {plan_id}")
+    if plan.status != "draft":
+        raise HTTPException(status_code=409, detail="只能执行 draft 方案")
+
+    media = await load_plan_media(db, plan)
+    if source_snapshot(media) != plan.source_snapshot:
+        raise HTTPException(
+            status_code=409,
+            detail="源目录已变化，请重新生成方案后再执行",
+        )
+
+    request = body or PlanExecuteRequest()
+
+    async def stream():
+        try:
+            async for event in run_plan(
+                db,
+                plan,
+                media,
+                request.write_remarks,
+                request.remark_template,
+            ):
+                yield _sse(event)
+        except Exception as exc:
+            logger.error("执行方案失败: %s", exc, exc_info=True)
+            yield _sse({"type": "fatal_error", "message": str(exc)})
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/archive/plans/{plan_id}")
