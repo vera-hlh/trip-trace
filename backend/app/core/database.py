@@ -4,15 +4,35 @@
 """
 import logging
 import os
+import shutil
+from pathlib import Path
+
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
+
+def app_data_dir() -> Path:
+    """应用数据目录：Windows 用 %APPDATA%\\TripTrace，其他平台用 ~/.triptrace。"""
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        return Path(appdata) / "TripTrace"
+    return Path.home() / ".triptrace"
+
+
+def resolve_db_path() -> Path:
+    """数据库路径：TRIPRACE_DB_PATH 优先，否则放应用数据目录。"""
+    override = os.environ.get("TRIPRACE_DB_PATH")
+    if override:
+        return Path(override).expanduser()
+    return app_data_dir() / "triprace.sqlite"
+
+
 # 数据库文件路径（可通过环境变量覆盖）
-DB_PATH = os.environ.get("TRIPRACE_DB_PATH", "triprace.sqlite")
-DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
+DB_PATH = str(resolve_db_path())
+DATABASE_URL = f"sqlite+aiosqlite:///{Path(DB_PATH).as_posix()}"
 
 engine = create_async_engine(
     DATABASE_URL,
@@ -66,12 +86,37 @@ async def _run_migrations() -> None:
                 # 列已存在，正常情况，忽略
 
 
+def _migrate_legacy_db(target: Path | None = None) -> None:
+    """首次切到应用数据目录时，把旧的本地 triprace.sqlite 复制过去。"""
+    target_path = target or Path(DB_PATH)
+    if target_path.exists():
+        return
+
+    candidates = [
+        Path.cwd() / "triprace.sqlite",
+        Path.cwd() / "backend" / "triprace.sqlite",
+        Path(__file__).resolve().parents[2] / "triprace.sqlite",
+    ]
+    for source in candidates:
+        try:
+            if source.exists() and source.resolve() != target_path.resolve():
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target_path)
+                logger.info("已迁移旧数据库：%s -> %s", source, target_path)
+                return
+        except OSError:
+            continue
+
+
 async def init_db() -> None:
     """
     初始化数据库，创建所有表（若不存在则创建，已存在则跳过），
     并运行字段迁移。
     在 FastAPI startup 事件中调用。
     """
+    _migrate_legacy_db()
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+
     # 导入所有模型，确保它们被注册到 Base.metadata
     from app.models import (  # noqa: F401
         archive_log,

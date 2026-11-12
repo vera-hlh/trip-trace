@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
-import { join } from "path";
+import { join, dirname } from "path";
+import { mkdirSync } from "fs";
 import { spawn, ChildProcess } from "child_process";
 import http from "http";
 
@@ -58,11 +59,21 @@ function startBackend() {
 
   const backendExe = join(process.resourcesPath, "backend", "trip-trace-backend.exe");
 
+  // 与 Python 端 app_data_dir() 保持一致：%APPDATA%\TripTrace
+  const userData = join(app.getPath("appData"), "TripTrace");
+  mkdirSync(userData, { recursive: true });
+  const dbPath = join(userData, "triprace.sqlite");
+  const envFile = join(userData, ".env");
+
   console.log("[Electron] 启动后端子进程:", backendExe);
+  console.log("[Electron] 用户数据目录:", userData);
   backendProcess = spawn(backendExe, [], {
+    cwd: dirname(backendExe),
     env: {
       ...process.env,
       TRIPRACE_BACKEND_PORT: String(BACKEND_PORT),
+      TRIPRACE_DB_PATH: dbPath,
+      TRIPRACE_ENV_FILE: envFile,
     },
     detached: false,
   });
