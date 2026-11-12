@@ -73,7 +73,14 @@ async def init_db() -> None:
     在 FastAPI startup 事件中调用。
     """
     # 导入所有模型，确保它们被注册到 Base.metadata
-    from app.models import file, trip, cache, archive_log, trip_record  # noqa: F401
+    from app.models import (  # noqa: F401
+        archive_log,
+        archive_plan,
+        cache,
+        file,
+        trip,
+        trip_record,
+    )
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
