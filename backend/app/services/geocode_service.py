@@ -529,6 +529,81 @@ def is_in_china(lat: float, lon: float) -> bool:
     return False
 
 
+def _point_segment_distance_km(
+    lat: float, lon: float, a: list, b: list
+) -> float:
+    """点到经纬度线段的近似距离（km，小范围等距投影）。"""
+    kx = 111.320 * math.cos(math.radians(lat))
+    ky = 110.574
+    ax = (a[0] - lon) * kx
+    ay = (a[1] - lat) * ky
+    bx = (b[0] - lon) * kx
+    by = (b[1] - lat) * ky
+    dx, dy = bx - ax, by - ay
+    denom = dx * dx + dy * dy
+    if denom == 0:
+        return math.hypot(ax, ay)
+    t = -(ax * dx + ay * dy) / denom
+    t = max(0.0, min(1.0, t))
+    return math.hypot(ax + t * dx, ay + t * dy)
+
+
+def distance_to_china_border_km(lat: float, lon: float) -> float:
+    """返回到中国国界折线的最近距离（km）；用于边境 GPS 噪声缓冲。"""
+    global _CHINA_RINGS
+    if _CHINA_RINGS is None:
+        _CHINA_RINGS = _load_china_rings()
+    if not _CHINA_RINGS:
+        return 0.0 if _is_in_china_bbox(lat, lon) else float("inf")
+
+    best = float("inf")
+    pad = 0.8  # 约 80km 的 bbox 预筛，避免遍历全部线段
+    for min_lon, max_lon, min_lat, max_lat, ring in _CHINA_RINGS:
+        if not (
+            min_lon - pad <= lon <= max_lon + pad
+            and min_lat - pad <= lat <= max_lat + pad
+        ):
+            continue
+        prev = ring[-1]
+        for point in ring:
+            d = _point_segment_distance_km(lat, lon, prev, point)
+            if d < best:
+                best = d
+                if best <= 0.01:
+                    return 0.0
+            prev = point
+    return best
+
+
+def is_within_china_buffer(lat: float, lon: float, buffer_km: float = 50.0) -> bool:
+    """坐标在中国境内，或距国界 buffer_km 以内（用于国内行程的边境纠偏）。"""
+    if is_in_china(lat, lon):
+        return True
+    return distance_to_china_border_km(lat, lon) <= buffer_km
+
+
+def allow_geocode_online(lat: float, lon: float, trip_type: str = "mixed") -> bool:
+    """是否允许把该坐标送到高德。
+
+    - domestic：允许国界 + 50km 缓冲（修复漠河/长白山边境 GPS 噪声）；
+    - mixed / abroad：只允许真正落在国界内的坐标；
+    - abroad 的中国坐标仍会解析，但由异常检测标记出来。
+    """
+    if trip_type == "domestic":
+        return is_within_china_buffer(lat, lon, 50.0)
+    return is_in_china(lat, lon)
+
+
+def is_china_anomaly(lat: float, lon: float, trip_type: str) -> bool:
+    """坐标与用户选择行程类型不符时返回 True。"""
+    if trip_type == "domestic":
+        return not is_within_china_buffer(lat, lon, 50.0)
+    if trip_type == "abroad":
+        return is_in_china(lat, lon)
+    return False
+
+
+
 
 # ============================================================
 # 统一入口函数
@@ -586,13 +661,11 @@ async def get_location(
 
     # 第三层：在线 API 增强（获取 POI 景点名）
     #
-    # 触发条件：
-    #   - 配置了高德 Key；
-    #   - 行程类型不是 abroad；
-    #   - 坐标在中国国界多边形内。
-    # 这样境外行程不会被误送到高德，也不会把首尔/河内/乌兰巴托标成中国。
-    in_china = is_in_china(lat, lon)
-    allow_online = trip_type != "abroad" and in_china
+    # trip_type 是用户的“先验”：
+    #   - domestic：允许国界 + 50km 缓冲，修复漠河/长白山边境 GPS 噪声；
+    #   - mixed / abroad：只允许真正落在国界内的坐标；
+    #   - abroad 的中国坐标仍会解析，但由异常检测标记。
+    allow_online = allow_geocode_online(lat, lon, trip_type)
     if gaode_api_key and allow_online:
         online_loc = await reverse_geocode_gaode(lat, lon, gaode_api_key)
         if online_loc:

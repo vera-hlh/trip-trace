@@ -463,15 +463,12 @@ async def archive_execute(
             })
 
             # 5. 构建异常文件路径集合（按 trip_type 过滤）
-            from app.services.geocode_service import is_in_china
+            from app.services.geocode_service import is_china_anomaly
             anomaly_paths: set[str] = set()
             if request.trip_type in ("domestic", "abroad"):
                 for f in db_files:
                     if f.has_gps and f.latitude and f.longitude:
-                        in_china = is_in_china(f.latitude, f.longitude)
-                        if request.trip_type == "domestic" and not in_china:
-                            anomaly_paths.add(f.original_path)
-                        elif request.trip_type == "abroad" and in_china:
+                        if is_china_anomaly(f.latitude, f.longitude, request.trip_type):
                             anomaly_paths.add(f.original_path)
 
             # 6. 执行文件复制

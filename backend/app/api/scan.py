@@ -498,7 +498,8 @@ async def geocode_scanned_files(
         get_location,
         translate_cn_location,
         PoiClusterState,
-        is_in_china,
+        allow_geocode_online,
+        is_china_anomaly,
     )
     from datetime import datetime as _dt
 
@@ -562,8 +563,8 @@ async def geocode_scanned_files(
                     pass
 
             if force_repoi:
-                # force_repoi 模式：只处理国内坐标，境外行程强制离线
-                if trip_type == "abroad" or not is_in_china(f.latitude, f.longitude):
+                # force_repoi 模式：按 trip_type 策略决定是否允许在线查询
+                if not allow_geocode_online(f.latitude, f.longitude, trip_type):
                     continue
                 from app.services.geocode_service import reverse_geocode_gaode
                 online_loc = await reverse_geocode_gaode(f.latitude, f.longitude, gaode_key)
@@ -641,11 +642,7 @@ async def geocode_scanned_files(
         )
         all_gps_files = all_gps_result.scalars().all()
         for f in all_gps_files:
-            in_china = is_in_china(f.latitude, f.longitude)
-            is_anomaly = (
-                (trip_type == "domestic" and not in_china) or
-                (trip_type == "abroad" and in_china)
-            )
+            is_anomaly = is_china_anomaly(f.latitude, f.longitude, trip_type)
             if is_anomaly:
                 anomaly_files.append(f.file_name)
 
