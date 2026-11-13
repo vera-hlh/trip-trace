@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     nominatim_email: str = ""
     nominatim_timeout_seconds: float = 10.0
 
+    # 境外附近景点（Overpass / OSM），用于弥补 Nominatim 最近对象不是景点
+    overpass_enabled: bool = False
+    overpass_url: str = "https://overpass-api.de/api/interpreter"
+    overpass_radius_m: int = 1500
+    overpass_timeout_seconds: float = 15.0
+
     # 归档默认参数
     big_trip_threshold_days: int = 30
     small_trip_threshold_hours: int = 2

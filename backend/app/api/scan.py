@@ -513,11 +513,13 @@ async def geocode_scanned_files(
         get_location,
         translate_cn_location,
         PoiClusterState,
+        GeoLocation,
         allow_geocode_online,
         is_china_anomaly,
         is_in_china,
         make_cache_key,
         reverse_geocode_nominatim,
+        find_nearby_travel_poi,
     )
     from app.services.geocode_cache import (
         cache_is_usable,
@@ -616,6 +618,24 @@ async def geocode_scanned_files(
                         email=settings.nominatim_email,
                         timeout=settings.nominatim_timeout_seconds,
                     )
+                    if settings.overpass_enabled and (loc is None or not loc.poi):
+                        nearby = await find_nearby_travel_poi(
+                            first.latitude,
+                            first.longitude,
+                            user_agent=settings.nominatim_user_agent,
+                            base_url=settings.overpass_url,
+                            radius_m=settings.overpass_radius_m,
+                            timeout=settings.overpass_timeout_seconds,
+                        )
+                        if nearby:
+                            if loc is None:
+                                loc = GeoLocation(
+                                    poi=nearby[0],
+                                    poi_type=nearby[1],
+                                    source="overpass",
+                                )
+                            else:
+                                loc.poi, loc.poi_type = nearby
                 api_calls += 1
                 if loc:
                     store_location(db, cache_map, first.latitude, first.longitude, loc)
@@ -654,6 +674,7 @@ async def geocode_scanned_files(
                     gaode_key,
                     trip_type,
                     settings.nominatim_enabled,
+                    settings.overpass_enabled,
                 ):
                     loc = location_from_row(cached)
                     api_called = False
@@ -670,6 +691,10 @@ async def geocode_scanned_files(
                         nominatim_user_agent=settings.nominatim_user_agent,
                         nominatim_url=settings.nominatim_url,
                         nominatim_email=settings.nominatim_email,
+                        overpass_enabled=settings.overpass_enabled,
+                        overpass_url=settings.overpass_url,
+                        overpass_radius_m=settings.overpass_radius_m,
+                        overpass_timeout_seconds=settings.overpass_timeout_seconds,
                     )
                     if loc:
                         store_location(db, cache_map, f.latitude, f.longitude, loc)
@@ -685,13 +710,13 @@ async def geocode_scanned_files(
                         f.township = loc.township
                         f.country = loc.country or "中国"
                         f.geocode_source = "gaode"
-                    elif loc.source == "nominatim":
+                    elif loc.source in ("nominatim", "overpass"):
                         f.city = loc.city
                         f.province = loc.province
                         f.district = loc.district
                         f.township = loc.township
                         f.country = loc.country
-                        f.geocode_source = "nominatim"
+                        f.geocode_source = loc.source
                     elif loc.country_code == "CN":
                         cn_city, cn_province = translate_cn_location(loc.city, loc.province)
                         f.city = f"{cn_city} ({loc.city})" if cn_city != loc.city else loc.city

@@ -748,6 +748,179 @@ async def reverse_geocode_nominatim(
 
 
 # ============================================================
+# 境外附近景点：Overpass（OSM）
+# ============================================================
+
+_OVERPASS_LOCK = asyncio.Lock()
+_OVERPASS_LAST_REQUEST = 0.0
+_OVERPASS_MIN_INTERVAL = 1.0
+_OVERPASS_DISABLED_UNTIL = 0.0
+_OVERPASS_COOLDOWN_SECONDS = 600.0
+
+_OVERPASS_PENALTY = {
+    "attraction": 0,
+    "museum": 0,
+    "viewpoint": 80,
+    "artwork": 120,
+    "zoo": 50,
+    "theme_park": 50,
+    "castle": 0,
+    "ruins": 50,
+    "monument": 50,
+    "memorial": 80,
+    "archaeological_site": 50,
+    "park": 120,
+    "garden": 100,
+    "nature_reserve": 250,
+    "peak": 150,
+    "water": 150,
+    "beach": 100,
+    "bay": 200,
+    "place_of_worship": 220,
+}
+_OVERPASS_TYPE_LABEL = {
+    "attraction": "风景名胜",
+    "museum": "博物馆",
+    "viewpoint": "观景点",
+    "artwork": "艺术景观",
+    "zoo": "动物园",
+    "theme_park": "主题公园",
+    "castle": "城堡",
+    "ruins": "遗址",
+    "monument": "纪念碑",
+    "memorial": "纪念地",
+    "archaeological_site": "考古遗址",
+    "park": "公园",
+    "garden": "花园",
+    "nature_reserve": "自然保护区",
+    "peak": "山峰",
+    "water": "水域",
+    "beach": "海滩",
+    "bay": "海湾",
+    "place_of_worship": "宗教场所",
+}
+_OVERPASS_NON_TRAVEL = {
+    "hotel", "guest_house", "hostel", "motel", "apartment", "chalet",
+    "camp_site", "caravan_site", "information", "picnic_site",
+}
+
+
+async def _overpass_throttle() -> None:
+    global _OVERPASS_LAST_REQUEST
+    async with _OVERPASS_LOCK:
+        wait = _OVERPASS_MIN_INTERVAL - (time.monotonic() - _OVERPASS_LAST_REQUEST)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _OVERPASS_LAST_REQUEST = time.monotonic()
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def _overpass_poi_kind(tags: dict) -> str:
+    tourism = tags.get("tourism")
+    if tourism:
+        return "" if tourism in _OVERPASS_NON_TRAVEL else tourism
+    if tags.get("historic"):
+        return "historic"
+    natural = tags.get("natural")
+    if natural in {"peak", "water", "beach", "bay", "glacier", "volcano", "spring", "cave_entrance"}:
+        return natural
+    leisure = tags.get("leisure")
+    if leisure in {"park", "garden", "nature_reserve"}:
+        return leisure
+    if tags.get("amenity") == "place_of_worship":
+        return "place_of_worship"
+    return ""
+
+
+def _parse_overpass_elements(elements: list, lat: float, lon: float) -> Optional[tuple[str, str]]:
+    best: Optional[tuple[float, str, str]] = None
+    for element in elements:
+        tags = element.get("tags") or {}
+        name = tags.get("name:zh") or tags.get("name:en") or tags.get("name")
+        if not name:
+            continue
+        kind = _overpass_poi_kind(tags)
+        if not kind:
+            continue
+
+        center = element.get("center") or {}
+        el_lat = element.get("lat", center.get("lat"))
+        el_lon = element.get("lon", center.get("lon"))
+        if el_lat is None or el_lon is None:
+            continue
+
+        distance = _haversine_m(lat, lon, float(el_lat), float(el_lon))
+        penalty = _OVERPASS_PENALTY.get(kind, 200)
+        score = distance + penalty
+        if best is None or score < best[0]:
+            label = _OVERPASS_TYPE_LABEL.get(kind, "景点")
+            best = (score, name, label)
+
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
+def _overpass_query(lat: float, lon: float, radius_m: int, timeout: float) -> str:
+    r = int(radius_m)
+    t = int(timeout)
+    # 只查明确的景点类型，避免公共 Overpass 因范围过大 502
+    return f"""[out:json][timeout:{t}];
+nwr["tourism"~"^(attraction|museum|viewpoint|zoo|theme_park|artwork)$"](around:{r},{lat},{lon});
+out center tags 30;"""
+
+
+async def find_nearby_travel_poi(
+    lat: float,
+    lon: float,
+    user_agent: str,
+    base_url: str = "https://overpass-api.de/api/interpreter",
+    radius_m: int = 1500,
+    timeout: float = 15.0,
+) -> Optional[tuple[str, str]]:
+    """查询附近旅行相关 POI，返回 (名称, 中文类型)；失败返回 None。"""
+    global _OVERPASS_DISABLED_UNTIL
+    if not user_agent:
+        user_agent = "TripTrace/0.1 (local desktop app)"
+
+    if time.monotonic() < _OVERPASS_DISABLED_UNTIL:
+        return None
+
+    await _overpass_throttle()
+    try:
+        import httpx
+
+        query = _overpass_query(lat, lon, radius_m, timeout)
+        async with httpx.AsyncClient(
+            timeout=timeout + 5,
+            headers={"User-Agent": user_agent},
+        ) as client:
+            resp = await client.post(base_url, data={"data": query})
+
+        if resp.status_code != 200:
+            logger.warning("Overpass HTTP %s: %s", resp.status_code, resp.text[:200])
+            if resp.status_code in (429, 502, 503, 504):
+                _OVERPASS_DISABLED_UNTIL = time.monotonic() + _OVERPASS_COOLDOWN_SECONDS
+                logger.warning("Overpass 暂时不可用，%d 秒内跳过", int(_OVERPASS_COOLDOWN_SECONDS))
+            return None
+
+        payload = resp.json()
+        return _parse_overpass_elements(payload.get("elements") or [], lat, lon)
+    except Exception as exc:
+        _OVERPASS_DISABLED_UNTIL = time.monotonic() + _OVERPASS_COOLDOWN_SECONDS
+        logger.warning("Overpass 查询失败 (%s,%s): %s", lat, lon, exc)
+        return None
+
+
+# ============================================================
 # 统一入口函数
 # ============================================================
 
@@ -763,6 +936,10 @@ async def get_location(
     nominatim_user_agent: str = "TripTrace/0.1 (local desktop app)",
     nominatim_url: str = "https://nominatim.openstreetmap.org",
     nominatim_email: str = "",
+    overpass_enabled: bool = False,
+    overpass_url: str = "https://overpass-api.de/api/interpreter",
+    overpass_radius_m: int = 1500,
+    overpass_timeout_seconds: float = 15.0,
 ) -> tuple[GeoLocation, bool]:
     """
     三层逆地理编码统一入口
@@ -779,6 +956,10 @@ async def get_location(
         nominatim_user_agent: Nominatim 要求的可识别 UA
         nominatim_url: 公共或自建 Nominatim 地址
         nominatim_email: 可选联系邮箱（也会写入请求参数）
+        overpass_enabled: 境外坐标是否用 Overpass 补充附近景点
+        overpass_url: Overpass 实例地址
+        overpass_radius_m: 附近景点搜索半径（米）
+        overpass_timeout_seconds: Overpass 查询超时（秒）
 
     Returns:
         (GeoLocation, api_called)
@@ -855,6 +1036,27 @@ async def get_location(
             location.country = online_loc.country or location.country
             location.country_code = online_loc.country_code or location.country_code
             location.source = "nominatim"
+            api_called = True
+
+    # 境外附近景点：Nominatim 的最近对象经常不是景点，用 Overpass 补一次
+    if (
+        overpass_enabled
+        and trip_type in ("abroad", "mixed")
+        and not is_in_china(lat, lon)
+        and not location.poi
+    ):
+        nearby = await find_nearby_travel_poi(
+            lat,
+            lon,
+            user_agent=nominatim_user_agent,
+            base_url=overpass_url,
+            radius_m=overpass_radius_m,
+            timeout=overpass_timeout_seconds,
+        )
+        if nearby:
+            location.poi, location.poi_type = nearby
+            if not api_called:
+                location.source = "overpass"
             api_called = True
 
     # 创建新的 POI 聚类（完整保存地理层级字段，供后续聚类命中时复用）

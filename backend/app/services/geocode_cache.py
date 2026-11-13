@@ -15,7 +15,7 @@ from app.services.geocode_service import (
     make_cache_key,
 )
 
-ONLINE_SOURCES = {"gaode", "nominatim"}
+ONLINE_SOURCES = {"gaode", "nominatim", "overpass"}
 
 
 async def load_cache(db: AsyncSession) -> dict[tuple[float, float], GeocodeCache]:
@@ -44,18 +44,19 @@ def cache_is_usable(
     gaode_api_key: str,
     trip_type: str,
     nominatim_enabled: bool = False,
+    overpass_enabled: bool = False,
 ) -> bool:
     if row is None:
         return False
     if row.source in ONLINE_SOURCES:
         return True
     # 离线缓存：没有任何在线 provider，或该坐标本来就不允许在线查询时，可直接复用
-    if not gaode_api_key and not nominatim_enabled:
+    if not gaode_api_key and not nominatim_enabled and not overpass_enabled:
         return True
     if allow_geocode_online(lat, lon, trip_type):
         return False
     if (
-        nominatim_enabled
+        (nominatim_enabled or overpass_enabled)
         and trip_type in ("abroad", "mixed")
         and not is_in_china(lat, lon)
     ):
