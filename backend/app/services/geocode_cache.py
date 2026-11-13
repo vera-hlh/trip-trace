@@ -11,8 +11,11 @@ from app.models.cache import GeocodeCache
 from app.services.geocode_service import (
     GeoLocation,
     allow_geocode_online,
+    is_in_china,
     make_cache_key,
 )
+
+ONLINE_SOURCES = {"gaode", "nominatim"}
 
 
 async def load_cache(db: AsyncSession) -> dict[tuple[float, float], GeocodeCache]:
@@ -40,15 +43,24 @@ def cache_is_usable(
     lon: float,
     gaode_api_key: str,
     trip_type: str,
+    nominatim_enabled: bool = False,
 ) -> bool:
     if row is None:
         return False
-    if row.source == "gaode":
+    if row.source in ONLINE_SOURCES:
         return True
-    # 离线缓存：没有 Key，或该坐标本来就不允许在线查询时，可直接复用
-    if not gaode_api_key:
+    # 离线缓存：没有任何在线 provider，或该坐标本来就不允许在线查询时，可直接复用
+    if not gaode_api_key and not nominatim_enabled:
         return True
-    return not allow_geocode_online(lat, lon, trip_type)
+    if allow_geocode_online(lat, lon, trip_type):
+        return False
+    if (
+        nominatim_enabled
+        and trip_type in ("abroad", "mixed")
+        and not is_in_china(lat, lon)
+    ):
+        return False
+    return True
 
 
 def store_location(
@@ -65,8 +77,8 @@ def store_location(
         db.add(row)
         cache_map[key] = row
 
-    # 已有高德结果时，不让后续离线结果把它降级
-    if row.source == "gaode" and location.source != "gaode":
+    # 已有在线结果时，不让后续离线结果把它降级
+    if row.source in ONLINE_SOURCES and location.source not in ONLINE_SOURCES:
         return
 
     row.country = location.country or row.country

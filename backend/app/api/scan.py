@@ -499,11 +499,11 @@ async def geocode_scanned_files(
     三层策略：
       1. 离线 reverse_geocoder（省市，全球覆盖）
       2. POI 聚类复用（同行程同地点不重复调用 API）
-      3. 高德地图 API（若已配置 Key，则获取精确中文地名 + POI 景点名）
+      3. 中国坐标走高德；境外坐标走 Nominatim（若启用）
 
     trip_type 参数：
       "domestic" = 国内行程（国界 + 50km 缓冲内走高德，境外坐标标记异常）
-      "abroad"   = 境外行程（境外坐标离线，中国坐标仍解析但标记异常）
+      "abroad"   = 境外行程（境外坐标走 Nominatim/离线，中国坐标仍解析但标记异常）
       "mixed"    = 混合行程（按坐标判定，无异常检测）
 
     返回更新数量统计 + 异常文件摘要
@@ -515,7 +515,9 @@ async def geocode_scanned_files(
         PoiClusterState,
         allow_geocode_online,
         is_china_anomaly,
+        is_in_china,
         make_cache_key,
+        reverse_geocode_nominatim,
     )
     from app.services.geocode_cache import (
         cache_is_usable,
@@ -579,7 +581,14 @@ async def geocode_scanned_files(
         for f in files:
             if not f.latitude or not f.longitude:
                 continue
-            if not allow_geocode_online(f.latitude, f.longitude, trip_type):
+            use_gaode = allow_geocode_online(f.latitude, f.longitude, trip_type)
+            use_nominatim = (
+                not use_gaode
+                and settings.nominatim_enabled
+                and trip_type in ("abroad", "mixed")
+                and not is_in_china(f.latitude, f.longitude)
+            )
+            if not (use_gaode or use_nominatim):
                 continue
             key = make_cache_key(f.latitude, f.longitude)
             groups.setdefault(key, []).append(f)
@@ -593,7 +602,20 @@ async def geocode_scanned_files(
             if cached and cached.poi:
                 loc = location_from_row(cached)
             else:
-                loc = await reverse_geocode_gaode(first.latitude, first.longitude, gaode_key)
+                use_gaode = allow_geocode_online(first.latitude, first.longitude, trip_type)
+                if use_gaode:
+                    loc = await reverse_geocode_gaode(
+                        first.latitude, first.longitude, gaode_key
+                    )
+                else:
+                    loc = await reverse_geocode_nominatim(
+                        first.latitude,
+                        first.longitude,
+                        user_agent=settings.nominatim_user_agent,
+                        base_url=settings.nominatim_url,
+                        email=settings.nominatim_email,
+                        timeout=settings.nominatim_timeout_seconds,
+                    )
                 api_calls += 1
                 if loc:
                     store_location(db, cache_map, first.latitude, first.longitude, loc)
@@ -625,7 +647,14 @@ async def geocode_scanned_files(
 
                 key = make_cache_key(f.latitude, f.longitude)
                 cached = cache_map.get(key)
-                if cache_is_usable(cached, f.latitude, f.longitude, gaode_key, trip_type):
+                if cache_is_usable(
+                    cached,
+                    f.latitude,
+                    f.longitude,
+                    gaode_key,
+                    trip_type,
+                    settings.nominatim_enabled,
+                ):
                     loc = location_from_row(cached)
                     api_called = False
                 else:
@@ -637,6 +666,10 @@ async def geocode_scanned_files(
                         poi_clusters=poi_clusters,
                         time_threshold_hours=settings.small_trip_threshold_hours,
                         trip_type=trip_type,
+                        nominatim_enabled=settings.nominatim_enabled,
+                        nominatim_user_agent=settings.nominatim_user_agent,
+                        nominatim_url=settings.nominatim_url,
+                        nominatim_email=settings.nominatim_email,
                     )
                     if loc:
                         store_location(db, cache_map, f.latitude, f.longitude, loc)
@@ -652,6 +685,13 @@ async def geocode_scanned_files(
                         f.township = loc.township
                         f.country = loc.country or "中国"
                         f.geocode_source = "gaode"
+                    elif loc.source == "nominatim":
+                        f.city = loc.city
+                        f.province = loc.province
+                        f.district = loc.district
+                        f.township = loc.township
+                        f.country = loc.country
+                        f.geocode_source = "nominatim"
                     elif loc.country_code == "CN":
                         cn_city, cn_province = translate_cn_location(loc.city, loc.province)
                         f.city = f"{cn_city} ({loc.city})" if cn_city != loc.city else loc.city
@@ -702,7 +742,11 @@ async def geocode_scanned_files(
             if is_anomaly:
                 anomaly_files.append(f.file_name)
 
-    gaode_note = f"（高德 API 调用 {api_calls} 次）" if gaode_key else "（未配置高德 Key，仅离线模式）"
+    online_note = (
+        f"（在线 API 调用 {api_calls} 次）"
+        if (gaode_key or settings.nominatim_enabled)
+        else "（仅离线模式）"
+    )
     logger.info(
         "geocode.complete trip_type=%s force_repoi=%s files=%d updated=%d api_calls=%d errors=%d elapsed=%.2fs",
         trip_type, force_repoi, len(files), updated, api_calls, errors,
@@ -718,5 +762,5 @@ async def geocode_scanned_files(
         "trip_type": trip_type,
         "anomaly_count": len(anomaly_files),
         "anomaly_files": anomaly_files[:20],  # 最多返回前20个文件名
-        "message": f"已为 {updated} 个文件更新地理位置信息 {gaode_note}",
+        "message": f"已为 {updated} 个文件更新地理位置信息 {online_note}",
     }

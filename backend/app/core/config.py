@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # 逆地理编码
     gaode_api_key: str = ""
 
+    # 境外逆地理编码（公共 Nominatim 无需 Key；默认关闭，需显式开启）
+    nominatim_enabled: bool = False
+    nominatim_url: str = "https://nominatim.openstreetmap.org"
+    nominatim_user_agent: str = "TripTrace/0.1 (local desktop app)"
+    nominatim_email: str = ""
+    nominatim_timeout_seconds: float = 10.0
+
     # 归档默认参数
     big_trip_threshold_days: int = 30
     small_trip_threshold_hours: int = 2

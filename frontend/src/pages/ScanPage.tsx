@@ -320,7 +320,7 @@ export default function ScanPage() {
       });
       if (data.success) {
         setRepoiResult({ updated: data.updated, api_calls: data.api_calls || 0 });
-        addLog(`补充 POI 完成：更新 ${data.updated} 个文件，调用高德 API ${data.api_calls || 0} 次`);
+        addLog(`补充 POI 完成：更新 ${data.updated} 个文件，调用在线 API ${data.api_calls || 0} 次`);
         await handleLoadPoiGroups();
       } else {
         addLog(`补充 POI 失败: ${JSON.stringify(data)}`);
@@ -685,7 +685,7 @@ export default function ScanPage() {
         <div className="text-xs text-slate-500">
           {repoiResult ? (
             <span className="text-emerald-400">
-              ✅ 已补充 {repoiResult.updated} 个文件的景点 POI（高德 API {repoiResult.api_calls} 次）
+              ✅ 已补充 {repoiResult.updated} 个文件的景点 POI（在线 API {repoiResult.api_calls} 次）
             </span>
           ) : (
             <span>🔧 <strong className="text-slate-400">补充景点 POI</strong>：修复已有城市名但缺少景点名的旧数据</span>
@@ -907,7 +907,7 @@ export default function ScanPage() {
                 {(
                   [
                     { value: "domestic", icon: "🇨🇳", label: "国内行程", desc: "高德 API 精确地名" },
-                    { value: "abroad",   icon: "🌍", label: "境外行程", desc: "离线库（英文地名）" },
+                    { value: "abroad",   icon: "🌍", label: "境外行程", desc: "Nominatim / 离线" },
                     { value: "mixed",    icon: "🗺️",  label: "混合行程", desc: "自动国内/境外分发" },
                   ] as const
                 ).map(({ value, icon, label, desc }) => (
@@ -928,7 +928,7 @@ export default function ScanPage() {
                 ))}
               </div>
               <p className="text-xs text-amber-400/70">
-                ⚠️ 地理编码使用高德地图 API，对境外 GPS 坐标会返回错误或空结果。如有境外照片，请选择「境外」或「混合」行程。
+                ⚠️ 高德仅处理中国坐标；境外坐标需要 Nominatim（未配置时只返回离线城市名）。境外照片请选择「境外」或「混合」行程。
               </p>
             </div>
           )}

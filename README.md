@@ -81,6 +81,8 @@ pip install -r requirements-dev.txt
 启动后访问 <http://127.0.0.1:17890/health>。
 
 > 数据库默认在 `%APPDATA%\TripTrace\triprace.sqlite`；首次启动会把旧的 `backend/triprace.sqlite` 复制过去。可用 `TRIPRACE_DB_PATH` 覆盖。
+>
+> 境外逆地理编码默认关闭。在 `backend/.env` 设置 `TRIPRACE_NOMINATIM_ENABLED=true`、`TRIPRACE_NOMINATIM_USER_AGENT=TripTrace/0.1 (your-email)` 后启用公共 Nominatim（无需 Key；坐标会发送到 OpenStreetMap，注意隐私与 1 请求/秒限速）。
 
 ### 前端
 
@@ -120,7 +122,7 @@ cd backend
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | Phase 1 | 项目初始化 | ✅ 完成 |
-| Phase 2 | 后端核心模块（当前 143 项测试通过） | ✅ 完成 |
+| Phase 2 | 后端核心模块（当前 148 项测试通过） | ✅ 完成 |
 | Phase 3 | 前端界面 + 高德 POI 集成 | ✅ 完成 |
 | Phase 4 | 功能强化（POI 审核 / 行程命名 / 行程重建 / 我的旅迹） | ✅ 基本完成 |
 | Phase 5 | 多用户 SaaS | ⏸️ 搁置 |

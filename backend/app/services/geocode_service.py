@@ -13,10 +13,12 @@
   - 仅在切换景点时触发
   - 离线无法获取具体景点名（POI），需在线增强
 """
+import asyncio
 import json
 import logging
 import math
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -603,6 +605,146 @@ def is_china_anomaly(lat: float, lon: float, trip_type: str) -> bool:
     return False
 
 
+# ============================================================
+# 境外逆地理编码：Nominatim（OSM）
+# ============================================================
+
+_NOMINATIM_LOCK = asyncio.Lock()
+_NOMINATIM_LAST_REQUEST = 0.0
+_NOMINATIM_MIN_INTERVAL = 1.0  # 公共 Nominatim 限速：1 请求/秒
+
+_NOMINATIM_TRAVEL_CATEGORIES = {
+    "tourism", "historic", "natural", "leisure", "waterway", "place",
+}
+_NOMINATIM_TRAVEL_TYPES = {
+    "attraction", "museum", "viewpoint", "artwork", "gallery",
+    "memorial", "monument", "castle", "ruins", "archaeological_site",
+    "park", "garden", "nature_reserve", "zoo", "theme_park",
+    "place_of_worship", "bridge", "tower", "peak", "beach", "water",
+}
+
+
+async def _nominatim_throttle() -> None:
+    global _NOMINATIM_LAST_REQUEST
+    async with _NOMINATIM_LOCK:
+        wait = _NOMINATIM_MIN_INTERVAL - (time.monotonic() - _NOMINATIM_LAST_REQUEST)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _NOMINATIM_LAST_REQUEST = time.monotonic()
+
+
+def _parse_nominatim_payload(payload: dict) -> Optional[GeoLocation]:
+    address = payload.get("address") or {}
+    country = address.get("country") or ""
+    country_code = str(address.get("country_code") or "").upper()
+
+    province = address.get("state") or address.get("region") or address.get("province") or ""
+    city = (
+        address.get("city")
+        or address.get("town")
+        or address.get("village")
+        or address.get("municipality")
+        or address.get("county")
+        or ""
+    )
+    district = (
+        address.get("city_district")
+        or address.get("district")
+        or address.get("suburb")
+        or address.get("borough")
+        or ""
+    )
+    township = address.get("town") if city != address.get("town") else ""
+
+    namedetails = payload.get("namedetails") or {}
+    poi = (
+        namedetails.get("name:zh")
+        or namedetails.get("name")
+        or payload.get("name")
+        or ""
+    )
+    if not poi:
+        display = payload.get("display_name") or ""
+        first = display.split(",")[0].strip()
+        if first and first.lower() not in {city.lower(), province.lower(), country.lower()}:
+            poi = first
+
+    if poi and city and poi.strip().lower() == city.strip().lower():
+        poi = ""
+
+    # 公共 Nominatim 的最近对象经常是咖啡馆/商店；只保留旅行相关类型
+    category = payload.get("category") or ""
+    poi_type = payload.get("type") or ""
+    if poi and not (
+        category in _NOMINATIM_TRAVEL_CATEGORIES
+        or poi_type in _NOMINATIM_TRAVEL_TYPES
+    ):
+        poi = ""
+        poi_type = ""
+
+    if not any((country, province, city, poi)):
+        return None
+
+    return GeoLocation(
+        country=country,
+        country_code=country_code,
+        province=province,
+        city=city,
+        district=district,
+        township=township or "",
+        poi=poi,
+        poi_type=poi_type,
+        source="nominatim",
+    )
+
+
+async def reverse_geocode_nominatim(
+    lat: float,
+    lon: float,
+    user_agent: str,
+    base_url: str = "https://nominatim.openstreetmap.org",
+    email: str = "",
+    timeout: float = 10.0,
+) -> Optional[GeoLocation]:
+    """公共/自建 Nominatim 逆地理编码；必须带可识别 User-Agent。"""
+    if not user_agent:
+        user_agent = "TripTrace/0.1 (local desktop app)"
+
+    await _nominatim_throttle()
+    try:
+        import httpx
+
+        params = {
+            "format": "jsonv2",
+            "lat": f"{lat:.7f}",
+            "lon": f"{lon:.7f}",
+            "zoom": "18",
+            "addressdetails": "1",
+            "extratags": "1",
+            "namedetails": "1",
+            "accept-language": "zh-CN,en",
+        }
+        if email:
+            params["email"] = email
+
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            headers={
+                "User-Agent": user_agent,
+                "Accept-Language": "zh-CN,en",
+            },
+            follow_redirects=True,
+        ) as client:
+            resp = await client.get(f"{base_url.rstrip('/')}/reverse", params=params)
+
+        if resp.status_code != 200:
+            logger.warning("Nominatim HTTP %s: %s", resp.status_code, resp.text[:200])
+            return None
+
+        return _parse_nominatim_payload(resp.json())
+    except Exception as exc:
+        logger.warning("Nominatim 逆地理编码失败 (%s,%s): %s", lat, lon, exc)
+        return None
 
 
 # ============================================================
@@ -617,6 +759,10 @@ async def get_location(
     poi_clusters: Optional[list[PoiClusterState]] = None,
     time_threshold_hours: float = 2.0,
     trip_type: str = "mixed",
+    nominatim_enabled: bool = False,
+    nominatim_user_agent: str = "TripTrace/0.1 (local desktop app)",
+    nominatim_url: str = "https://nominatim.openstreetmap.org",
+    nominatim_email: str = "",
 ) -> tuple[GeoLocation, bool]:
     """
     三层逆地理编码统一入口
@@ -625,10 +771,14 @@ async def get_location(
         lat: 纬度
         lon: 经度
         dt: 照片拍摄时间（用于 POI 聚类时间判断）
-        gaode_api_key: 高德 API Key（空则跳过第三层）
+        gaode_api_key: 高德 API Key（空则跳过国内在线增强）
         poi_clusters: 当前行程的 POI 聚类列表（None 则不做聚类）
         time_threshold_hours: POI 聚类时间阈值（小时）
-        trip_type: "domestic" | "abroad" | "mixed"；abroad 强制离线
+        trip_type: "domestic" | "abroad" | "mixed"
+        nominatim_enabled: 是否允许境外坐标走 Nominatim
+        nominatim_user_agent: Nominatim 要求的可识别 UA
+        nominatim_url: 公共或自建 Nominatim 地址
+        nominatim_email: 可选联系邮箱（也会写入请求参数）
 
     Returns:
         (GeoLocation, api_called)
@@ -679,6 +829,32 @@ async def get_location(
             location.source = "gaode"
             location.country = "中国"
             location.country_code = "CN"
+            api_called = True
+
+    # 境外坐标：公共/自建 Nominatim（中国坐标仍走高德，不送 OSM）
+    if (
+        not api_called
+        and nominatim_enabled
+        and trip_type in ("abroad", "mixed")
+        and not is_in_china(lat, lon)
+    ):
+        online_loc = await reverse_geocode_nominatim(
+            lat,
+            lon,
+            user_agent=nominatim_user_agent,
+            base_url=nominatim_url,
+            email=nominatim_email,
+        )
+        if online_loc:
+            location.province = online_loc.province or location.province
+            location.city = online_loc.city or location.city
+            location.district = online_loc.district or location.district
+            location.township = online_loc.township or location.township
+            location.poi = online_loc.poi or location.poi
+            location.poi_type = online_loc.poi_type or location.poi_type
+            location.country = online_loc.country or location.country
+            location.country_code = online_loc.country_code or location.country_code
+            location.source = "nominatim"
             api_called = True
 
     # 创建新的 POI 聚类（完整保存地理层级字段，供后续聚类命中时复用）
