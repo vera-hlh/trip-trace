@@ -12,15 +12,34 @@
   - 是否有 GPS 标记
   - 是否需要人工审核（无时间 + 无 GPS）
 """
+import json
 import logging
 import os
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+_HEIF_REGISTERED = False
+
+
+def _ensure_heif_support() -> None:
+    """注册 pillow-heif，使 Image.open 能读取 iPhone HEIC/HEIF。"""
+    global _HEIF_REGISTERED
+    if _HEIF_REGISTERED:
+        return
+    try:
+        from pillow_heif import register_heif_opener
+
+        register_heif_opener()
+        _HEIF_REGISTERED = True
+    except ImportError:
+        logger.warning("pillow-heif 未安装，HEIC/HEIF 将无法读取 EXIF")
 
 # 支持的照片扩展名
 PHOTO_EXTENSIONS = {
@@ -45,6 +64,7 @@ class MediaFileData:
     file_size_bytes: int = 0
 
     datetime_original: Optional[datetime] = None  # 本地时间
+    time_source: str = ""       # exif | ffprobe | mvhd | tag | mtime
     latitude: Optional[float] = None
     longitude: Optional[float] = None
 
@@ -209,29 +229,45 @@ def extract_photo_metadata(file_path: str) -> MediaFileData:
         from PIL import Image
         from PIL.ExifTags import TAGS, GPSTAGS
 
-        with Image.open(file_path) as img:
-            # 尝试获取 EXIF 数据
-            exif_data = None
+        _ensure_heif_support()
 
-            # 方式一：_getexif()（大多数 JPEG）
+        with Image.open(file_path) as img:
+            # 合并 _getexif() 与 getexif()；HEIC 需要通过 IFD 指针展开
+            exif_data = {}
             if hasattr(img, "_getexif"):
                 try:
-                    exif_data = img._getexif()
+                    legacy = img._getexif()
+                    if legacy:
+                        exif_data.update(dict(legacy))
                 except Exception:
                     pass
 
-            # 方式二：getexif()（PIL >= 6.0，支持更多格式）
-            if not exif_data:
-                try:
-                    raw = img.getexif()
-                    if raw:
-                        exif_data = {k: v for k, v in raw.items()}
-                except Exception:
-                    pass
+            try:
+                raw = img.getexif()
+                if raw:
+                    for key, value in raw.items():
+                        exif_data.setdefault(key, value)
+                    # ExifIFD 指针（0x8769）：DateTimeOriginal 等
+                    try:
+                        exif_ifd = raw.get_ifd(0x8769)
+                        if exif_ifd:
+                            exif_data.update(dict(exif_ifd))
+                    except Exception:
+                        pass
+                    # GPS IFD 指针（0x8825）：GPSInfo
+                    try:
+                        gps_ifd = raw.get_ifd(0x8825)
+                        if gps_ifd:
+                            exif_data[0x8825] = dict(gps_ifd)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
             if not exif_data:
                 # 无 EXIF，使用文件修改时间作为降级方案
                 result.datetime_original = _get_file_mtime(file_path)
+                result.time_source = "mtime"
                 result.needs_review = True
                 return result
 
@@ -247,10 +283,14 @@ def extract_photo_metadata(file_path: str) -> MediaFileData:
 
             if dt_str:
                 from app.utils.timezone_utils import parse_exif_datetime
-                result.datetime_original = parse_exif_datetime(dt_str)
+                parsed = parse_exif_datetime(dt_str)
+                if parsed:
+                    result.datetime_original = parsed
+                    result.time_source = "exif"
 
             if not result.datetime_original:
                 result.datetime_original = _get_file_mtime(file_path)
+                result.time_source = "mtime"
 
             # 提取 GPS 信息
             gps_info = {}
@@ -298,10 +338,11 @@ def extract_photo_metadata(file_path: str) -> MediaFileData:
         result.error = str(e)
         # 降级：使用文件时间
         result.datetime_original = _get_file_mtime(file_path)
+        result.time_source = "mtime"
         result.needs_review = True
 
-    # 有时间但无 GPS，标记为待审核（不是错误，只是需要关注）
-    if not result.has_gps:
+    # 无 GPS，或时间来自 mtime（不是真实拍摄时间）→ 需要人工关注
+    if not result.has_gps or result.time_source == "mtime":
         result.needs_review = True
 
     return result
@@ -330,11 +371,130 @@ def _parse_iso6709(gps_str: str) -> tuple[Optional[float], Optional[float]]:
     return None, None
 
 
+def _parse_utc_datetime(value: str) -> Optional[datetime]:
+    """解析 ffprobe/ISO8601 时间，统一返回 UTC aware datetime。"""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _ffprobe_creation_time(file_path: str) -> Optional[datetime]:
+    """用 ffprobe 读取 creation_time（format 或 stream 标签）。"""
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                ffprobe,
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_entries",
+                "format_tags=creation_time:stream_tags=creation_time",
+                "-show_format",
+                "-show_streams",
+                file_path,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=10,
+        )
+        if proc.returncode != 0 or not proc.stdout:
+            return None
+        payload = json.loads(proc.stdout)
+        candidates = [
+            (payload.get("format") or {}).get("tags", {}).get("creation_time"),
+        ]
+        for stream in payload.get("streams") or []:
+            candidates.append((stream.get("tags") or {}).get("creation_time"))
+        for value in candidates:
+            parsed = _parse_utc_datetime(value) if value else None
+            if parsed:
+                return parsed
+    except Exception as exc:
+        logger.debug("ffprobe 读取 creation_time 失败 %s: %s", file_path, exc)
+    return None
+
+
+def _iter_mp4_boxes(file_obj, start: int, end: int):
+    """遍历 ISO BMFF box，yield (type, payload_start, box_end)。"""
+    pos = start
+    while pos + 8 <= end:
+        file_obj.seek(pos)
+        header = file_obj.read(8)
+        if len(header) < 8:
+            break
+        size = int.from_bytes(header[:4], "big")
+        box_type = header[4:8]
+        header_size = 8
+        if size == 1:
+            ext = file_obj.read(8)
+            if len(ext) < 8:
+                break
+            size = int.from_bytes(ext, "big")
+            header_size = 16
+        elif size == 0:
+            size = end - pos
+        if size < header_size:
+            break
+        yield box_type, pos + header_size, pos + size
+        pos += size
+
+
+def _read_mp4_creation_time(file_path: str) -> Optional[datetime]:
+    """不依赖 ffprobe，直接读取 MP4/MOV 的 mvhd creation_time（UTC）。"""
+    try:
+        with open(file_path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            file_size = f.tell()
+            f.seek(0)
+
+            moov = None
+            for box_type, payload_start, box_end in _iter_mp4_boxes(f, 0, file_size):
+                if box_type == b"moov":
+                    moov = (payload_start, box_end)
+                    break
+            if not moov:
+                return None
+
+            for box_type, payload_start, _ in _iter_mp4_boxes(f, moov[0], moov[1]):
+                if box_type != b"mvhd":
+                    continue
+                f.seek(payload_start)
+                version = f.read(1)[0]
+                f.read(3)  # flags
+                if version == 1:
+                    creation = int.from_bytes(f.read(8), "big")
+                else:
+                    creation = int.from_bytes(f.read(4), "big")
+                if not creation:
+                    return None
+                dt = datetime(1904, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=creation)
+                if 1990 <= dt.year <= 2100:
+                    return dt
+                return None
+    except Exception as exc:
+        logger.debug("读取 mvhd creation_time 失败 %s: %s", file_path, exc)
+    return None
+
+
 def extract_video_metadata(file_path: str) -> MediaFileData:
     """
     提取视频文件的元数据（创建时间 + GPS）
 
-    注意：视频的 creation_time 通常是 UTC 时间，需要转换为本地时间
+    时间优先级：
+      1. ffprobe creation_time（UTC）
+      2. MP4/MOV mvhd creation_time（UTC）
+      3. ©day / 通用标签（按 UTC 处理，保持旧行为）
+      4. 文件 mtime（标记 needs_review）
     """
     result = MediaFileData(
         file_path=file_path,
@@ -343,72 +503,78 @@ def extract_video_metadata(file_path: str) -> MediaFileData:
         file_size_bytes=os.path.getsize(file_path),
     )
 
+    creation_time_str = None
+    lat, lon = None, None
+
     try:
         import mutagen
         from mutagen.mp4 import MP4
 
         media = mutagen.File(file_path)
-        if media is None:
-            result.datetime_original = _get_file_mtime(file_path)
-            result.needs_review = True
-            return result
+        if media is not None:
+            # ---- MP4/MOV 格式 ----
+            if isinstance(media, MP4):
+                if "©day" in media:
+                    creation_time_str = media["©day"][0]
 
-        creation_time_str = None
-        lat, lon = None, None
+                # 苹果 QuickTime GPS 标签（iPhone 视频）
+                qt_gps_key = "----:com.apple.quicktime.location.ISO6709"
+                if qt_gps_key in media:
+                    try:
+                        gps_bytes = media[qt_gps_key][0]
+                        if hasattr(gps_bytes, "value"):
+                            gps_str = gps_bytes.value.decode("utf-8", errors="ignore")
+                        else:
+                            gps_str = bytes(gps_bytes).decode("utf-8", errors="ignore")
+                        lat, lon = _parse_iso6709(gps_str)
+                    except Exception as e:
+                        logger.debug(f"解析 QuickTime GPS 失败: {e}")
 
-        # ---- MP4/MOV 格式 ----
-        if isinstance(media, MP4):
-            # 创建时间：©day 标签（部分设备写入）
-            if "©day" in media:
-                creation_time_str = media["©day"][0]
-
-            # 苹果 QuickTime GPS 标签（iPhone 视频）
-            qt_gps_key = "----:com.apple.quicktime.location.ISO6709"
-            if qt_gps_key in media:
-                try:
-                    gps_bytes = media[qt_gps_key][0]
-                    if hasattr(gps_bytes, "value"):
-                        gps_str = gps_bytes.value.decode("utf-8", errors="ignore")
-                    else:
-                        gps_str = bytes(gps_bytes).decode("utf-8", errors="ignore")
-                    lat, lon = _parse_iso6709(gps_str)
-                except Exception as e:
-                    logger.debug(f"解析 QuickTime GPS 失败: {e}")
-
-        # ---- 其他格式，尝试通用标签 ----
-        else:
-            for key in ("creation_time", "date", "year"):
-                if hasattr(media, "tags") and media.tags and key in media.tags:
-                    val = media.tags[key]
-                    creation_time_str = str(val[0]) if isinstance(val, list) else str(val)
-                    break
-
-        # 解析创建时间（ISO 格式或 EXIF 格式）
-        if creation_time_str:
-            raw_dt = _parse_video_datetime(creation_time_str)
-            if raw_dt:
-                from app.utils.timezone_utils import utc_to_local
-                # 视频时间通常是 UTC，转为本地时间
-                result.datetime_original = utc_to_local(raw_dt, lat=lat, lon=lon)
-
-        if not result.datetime_original:
-            result.datetime_original = _get_file_mtime(file_path)
-
-        # GPS
-        if lat is not None and lon is not None:
-            result.latitude = round(lat, 7)
-            result.longitude = round(lon, 7)
-            result.has_gps = True
-
+            # ---- 其他格式，尝试通用标签 ----
+            else:
+                for key in ("creation_time", "date", "year"):
+                    if hasattr(media, "tags") and media.tags and key in media.tags:
+                        val = media.tags[key]
+                        creation_time_str = str(val[0]) if isinstance(val, list) else str(val)
+                        break
     except ImportError:
         result.error = "mutagen 未安装"
     except Exception as e:
         logger.warning(f"提取视频元数据失败 {file_path}: {e}")
         result.error = str(e)
-        result.datetime_original = _get_file_mtime(file_path)
-        result.needs_review = True
 
-    if not result.has_gps:
+    # 时间：优先 ffprobe / mvhd，其次 ©day，最后 mtime
+    creation_dt = _ffprobe_creation_time(file_path)
+    time_source = "ffprobe" if creation_dt else ""
+
+    if creation_dt is None:
+        creation_dt = _read_mp4_creation_time(file_path)
+        if creation_dt:
+            time_source = "mvhd"
+
+    if creation_dt is None and creation_time_str:
+        parsed = _parse_video_datetime(creation_time_str)
+        if parsed:
+            creation_dt = parsed
+            time_source = "tag"
+
+    if creation_dt is not None:
+        from app.utils.timezone_utils import utc_to_local
+
+        result.datetime_original = utc_to_local(creation_dt, lat=lat, lon=lon)
+        result.time_source = time_source
+    else:
+        result.datetime_original = _get_file_mtime(file_path)
+        result.time_source = "mtime"
+
+    # GPS
+    if lat is not None and lon is not None:
+        result.latitude = round(lat, 7)
+        result.longitude = round(lon, 7)
+        result.has_gps = True
+
+    # 无 GPS，或时间来自 mtime → 需要人工关注
+    if not result.has_gps or result.time_source == "mtime":
         result.needs_review = True
 
     return result

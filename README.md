@@ -30,7 +30,7 @@ TripTrace 帮助你把多年积累的旅行素材按「行程 → 地点 → 景
 | 前端 | React 18 + TypeScript + Vite + Tailwind CSS + Zustand |
 | 后端 | Python 3.12 + FastAPI + SQLAlchemy async |
 | 数据库 | SQLite（aiosqlite） |
-| 媒体处理 | Pillow、piexif、mutagen（ffmpeg/moviepy 为 v1.1 预留） |
+| 媒体处理 | Pillow、pillow-heif（HEIC）、piexif、mutagen；ffprobe 可选 |
 | 地图生成 | Folium（交互式 HTML） |
 | 地理编码 | reverse_geocoder（国际离线）+ 高德 Web 服务（在线增强） |
 | 打包 | PyInstaller + electron-builder（v1.0 目标） |
@@ -120,7 +120,7 @@ cd backend
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | Phase 1 | 项目初始化 | ✅ 完成 |
-| Phase 2 | 后端核心模块（当前 135 项测试通过） | ✅ 完成 |
+| Phase 2 | 后端核心模块（当前 138 项测试通过） | ✅ 完成 |
 | Phase 3 | 前端界面 + 高德 POI 集成 | ✅ 完成 |
 | Phase 4 | 功能强化（POI 审核 / 行程命名 / 行程重建 / 我的旅迹） | ✅ 基本完成 |
 | Phase 5 | 多用户 SaaS | ⏸️ 搁置 |
