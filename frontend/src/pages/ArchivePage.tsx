@@ -11,10 +11,8 @@
 import { useState } from "react";
 import { useAppStore } from "@/store/appStore";
 import type { BigTripData, TripContainer } from "@/store/appStore";
-import {executeArchivePlan, patchArchivePlan} from "@/api/backend";
+import {executeArchivePlan, patchArchivePlan, apiPost, backendUrl} from "@/api/backend";
 import clsx from "clsx";
-
-const API = "http://localhost:17890";
 
 // ── 类型定义 ─────────────────────────────────────────────────
 
@@ -336,7 +334,7 @@ export default function ArchivePage() {
         });
       } else {
         // 兼容：旧会话没有 planId 时走旧接口
-        response = await fetch(`${API}/api/archive/execute`, {
+        response = await fetch(backendUrl("/api/archive/execute"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -393,17 +391,12 @@ export default function ArchivePage() {
                 // 若勾选了"清理原文件"且归档无错误，自动移入回收站
                 if (deleteOriginals && finalStats.errors === 0) {
                   try {
-                    const cleanupRes = await fetch(`${API}/api/archive/cleanup`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        source_folder: sourceFolderPath,
-                        confirm: true,
-                        plan_id: currentPlanId,
-                        permanent: false,
-                      }),
+                    const cleanupData = await apiPost<any>("/api/archive/cleanup", {
+                      source_folder: sourceFolderPath,
+                      confirm: true,
+                      plan_id: currentPlanId,
+                      permanent: false,
                     });
-                    const cleanupData = await cleanupRes.json();
                     if (cleanupData.success) {
                       setCleanupResult({
                         deleted: cleanupData.deleted ?? cleanupData.deleted_count ?? 0,

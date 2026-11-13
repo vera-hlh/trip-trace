@@ -10,9 +10,9 @@
  */
 import { useEffect, useState, useCallback } from "react";
 import { useAppStore } from "@/store/appStore";
+import { apiGet, apiText, backendUrl } from "@/api/backend";
 import clsx from "clsx";
 
-const API = "http://localhost:17890";
 const THUMB_WIDTH = 160; // 缩略图宽度 px
 
 // ── 类型 ─────────────────────────────────────────────────────
@@ -48,7 +48,7 @@ function PhotoCard({
   const filePath = photo.current_path || photo.original_path;
   const isVideo = photo.file_type === "video";
   const thumbUrl =
-    `${API}/api/media/thumbnail?path=${encodeURIComponent(filePath)}&width=${THUMB_WIDTH}&quality=70`;
+    backendUrl(`/api/media/thumbnail?path=${encodeURIComponent(filePath)}&width=${THUMB_WIDTH}&quality=70`);
 
   const date = photo.datetime_original
     ? photo.datetime_original.slice(0, 10)
@@ -189,9 +189,7 @@ export default function MapPage() {
     try {
       const params = new URLSearchParams();
       if (sourceFolderPath) params.set("folder_path", sourceFolderPath);
-      const res = await fetch(`${API}/api/map/html?${params}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const html = await res.text();
+      const html = await apiText(`/api/map/html?${params}`);
       setMapHtml(html);
     } catch (e) {
       setMapError(`地图加载失败：${e}`);
@@ -227,8 +225,7 @@ export default function MapPage() {
     try {
       const params = new URLSearchParams({ city, limit: "60" });
       if (sourceFolderPath) params.set("folder_path", sourceFolderPath);
-      const res = await fetch(`${API}/api/map/photos?${params}`);
-      const json = await res.json();
+      const json = await apiGet<any>(`/api/map/photos?${params}`);
       if (json.success) {
         setPhotos(json.data.files);
       }

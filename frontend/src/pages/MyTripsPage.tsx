@@ -8,9 +8,9 @@
  */
 import { useEffect, useState, useCallback } from "react";
 import { useAppStore } from "@/store/appStore";
+import { apiGet } from "@/api/backend";
 import clsx from "clsx";
 
-const API = "http://localhost:17890";
 const PAGE_SIZE = 6;
 const MAX_PAGE_NUMBERS = 5;
 
@@ -155,8 +155,9 @@ function PosterPreview({ record }: { record: TripRecord | null }) {
       return;
     }
     setLoading(true);
-    fetch(`${API}/api/trips/records/${record.id}`)
-      .then((res) => res.json())
+    apiGet<{ success: boolean; data: { sub_trips: SubTripDetail[] } }>(
+      `/api/trips/records/${record.id}`
+    )
       .then((json) => {
         if (json.success) setDetail(json.data);
       })
@@ -274,8 +275,7 @@ export default function MyTripsPage() {
         page_size: String(PAGE_SIZE),
         sort: s,
       });
-      const res = await fetch(`${API}/api/trips/records?${params}`);
-      const json = await res.json();
+      const json = await apiGet<any>(`/api/trips/records?${params}`);
       if (json.success) {
         setRecords(json.data.records);
         setPage(json.data.page);

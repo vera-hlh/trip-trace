@@ -7,9 +7,8 @@
  */
 import { useEffect, useState } from "react";
 import { useAppStore } from "@/store/appStore";
+import { apiGet } from "@/api/backend";
 import clsx from "clsx";
-
-const API = "http://localhost:17890";
 
 // ── 类型 ─────────────────────────────────────────────────────
 
@@ -186,8 +185,7 @@ export default function HistoryPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`${API}/api/archive/logs?limit=50`);
-      const json = await res.json();
+      const json = await apiGet<any>("/api/archive/logs?limit=50");
       if (json.success) {
         setLogs(json.data.logs);
       } else {

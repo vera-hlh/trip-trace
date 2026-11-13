@@ -1,12 +1,10 @@
 import { Link } from "react-router-dom";
-
-const BACKEND_URL = "http://localhost:17890";
+import { apiGet } from "@/api/backend";
 
 export default function Home() {
   const handleCheckBackend = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/health`);
-      const data = await res.json();
+      const data = await apiGet("/health");
       alert(`✅ 后端连接正常\n${JSON.stringify(data, null, 2)}`);
     } catch {
       alert("❌ 后端未启动，请先运行: python uvicorn_config.py");

@@ -4,9 +4,8 @@
  */
 import { useEffect, useCallback, useState } from "react";
 import { useAppStore } from "@/store/appStore";
+import { apiGet, backendUrl } from "@/api/backend";
 import clsx from "clsx";
-
-const BACKEND_URL = "http://localhost:17890";
 
 // ── 我的旅迹预览卡片 ─────────────────────────────────────────
 
@@ -102,7 +101,7 @@ export default function HomePage() {
   // 检查后端连接
   const checkBackend = useCallback(async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(3000) });
+      const res = await fetch(backendUrl("/health"), { signal: AbortSignal.timeout(3000) });
       const ok = res.ok;
       setBackendReady(ok);
     } catch {
@@ -121,8 +120,9 @@ export default function HomePage() {
   useEffect(() => {
     if (!backendReady) return;
     setTripsLoading(true);
-    fetch(`${BACKEND_URL}/api/trips/records/recent?limit=5`)
-      .then((res) => res.json())
+    apiGet<{ success: boolean; data: { records: RecentTripRecord[] } }>(
+      "/api/trips/records/recent?limit=5"
+    )
       .then((json) => {
         if (json.success) setRecentTrips(json.data.records);
       })

@@ -708,14 +708,14 @@ export default function TestConsole() {
                 {/* 摘要 */}
                 <div className="mb-4 grid grid-cols-5 gap-2 text-center">
                   {[
-                    { label: "总文件", value: previewData.summary.total_files, color: "blue" },
-                    { label: "大行程", value: previewData.summary.big_trips_created, color: "purple" },
-                    { label: "子行程", value: previewData.summary.sub_trips_created, color: "emerald" },
-                    { label: "无GPS", value: previewData.summary.files_without_gps, color: "yellow" },
-                    { label: "待审核", value: previewData.summary.files_needing_review, color: "red" },
+                    { label: "总文件", value: previewData.summary.total_files, tone: "text-blue-400" },
+                    { label: "大行程", value: previewData.summary.big_trips_created, tone: "text-purple-400" },
+                    { label: "子行程", value: previewData.summary.sub_trips_created, tone: "text-emerald-400" },
+                    { label: "无GPS", value: previewData.summary.files_without_gps, tone: "text-yellow-400" },
+                    { label: "待审核", value: previewData.summary.files_needing_review, tone: "text-red-400" },
                   ].map((item) => (
                     <div key={item.label} className="bg-gray-900 rounded p-2">
-                      <div className={`text-xl font-bold text-${item.color}-400`}>{item.value}</div>
+                      <div className={`text-xl font-bold ${item.tone}`}>{item.value}</div>
                       <div className="text-xs text-gray-500">{item.label}</div>
                     </div>
                   ))}

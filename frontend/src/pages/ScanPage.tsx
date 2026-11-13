@@ -11,9 +11,14 @@ import { useState, useRef, useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import type { BigTripData } from "@/store/appStore";
 import { createArchivePlan, getArchivePlan, patchArchivePlan } from "@/api/backend";
+import {
+  apiDelete,
+  apiGet,
+  apiPost,
+  apiPut,
+  backendUrl,
+} from "@/api/backend";
 import clsx from "clsx";
-
-const API = "http://localhost:17890";
 
 // ── 类型定义 ─────────────────────────────────────────────────
 
@@ -294,7 +299,7 @@ function SubTripThumbnails({ files }: { files: Array<{ name: string; path: strin
           >
             <div className="aspect-square bg-slate-800 rounded-lg overflow-hidden border border-slate-700/50 group-hover:border-blue-600/50 transition-colors">
               <img
-                src={`${API}/api/media/thumbnail?path=${encodeURIComponent(file.path)}&width=120&quality=75`}
+                src={backendUrl(`/api/media/thumbnail?path=${encodeURIComponent(file.path)}&width=120&quality=75`)}
                 alt={file.name}
                 loading="lazy"
                 className="w-full h-full object-cover"
@@ -552,8 +557,9 @@ export default function ScanPage() {
     if (step === "done" && poiGroups.length === 0 && sourceFolderPath) {
       // 延迟一帧确保组件完全挂载后再触发网络请求
       const timer = setTimeout(() => {
-        fetch(`${API}/api/scan/geocoded?folder_path=${encodeURIComponent(sourceFolderPath)}`)
-          .then((res) => res.json())
+        apiGet<{ success: boolean; data: { groups: PoiGroup[] } }>(
+          `/api/scan/geocoded?folder_path=${encodeURIComponent(sourceFolderPath)}`
+        )
           .then((json) => {
             if (json.success && json.data.groups.length > 0) {
               setPoiGroups(
@@ -603,7 +609,7 @@ export default function ScanPage() {
 
     if (clearBeforeScan) {
       try {
-        await fetch(`${API}/api/scan/clear`, { method: "DELETE" });
+        await apiDelete("/api/scan/clear");
         addLog("已清空旧扫描数据");
       } catch (e) {
         addLog(`清空失败: ${e}`);
@@ -611,7 +617,7 @@ export default function ScanPage() {
     }
 
     try {
-      const response = await fetch(`${API}/api/scan`, {
+      const response = await fetch(backendUrl("/api/scan"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folder_path: sourceFolderPath, options: {} }),
@@ -673,12 +679,7 @@ export default function ScanPage() {
       tripType === "domestic" ? "国内" : tripType === "abroad" ? "境外" : "混合"
     }）...`);
     try {
-      const res = await fetch(`${API}/api/scan/geocode`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trip_type: tripType }),
-      });
-      const data = await res.json();
+      const data = await apiPost<any>("/api/scan/geocode", { trip_type: tripType });
       if (data.success) {
         setGeocodeResult({ updated: data.updated, errors: data.errors || 0 });
         addLog(`地理编码完成：更新 ${data.updated} 个文件`);
@@ -713,12 +714,10 @@ export default function ScanPage() {
     setRepoiResult(null);
     addLog("开始补充景点 POI（重新处理已有城市但无 POI 的文件）...");
     try {
-      const res = await fetch(`${API}/api/scan/geocode`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trip_type: tripType, force_repoi: true }),
+      const data = await apiPost<any>("/api/scan/geocode", {
+        trip_type: tripType,
+        force_repoi: true,
       });
-      const data = await res.json();
       if (data.success) {
         setRepoiResult({ updated: data.updated, api_calls: data.api_calls || 0 });
         addLog(`补充 POI 完成：更新 ${data.updated} 个文件，调用高德 API ${data.api_calls || 0} 次`);
@@ -740,8 +739,7 @@ export default function ScanPage() {
     try {
       const params = new URLSearchParams();
       if (sourceFolderPath) params.set("folder_path", sourceFolderPath);
-      const res = await fetch(`${API}/api/scan/geocoded?${params}`);
-      const json = await res.json();
+      const json = await apiGet<any>(`/api/scan/geocoded?${params}`);
       if (json.success) {
         setPoiGroups(json.data.groups.map((g: PoiGroup) => ({
           ...g,
@@ -781,10 +779,9 @@ export default function ScanPage() {
         prev.map((g, i) => (i === idx ? { ...g, loadingCandidates: true } : g))
       );
       try {
-        const res = await fetch(
-          `${API}/api/scan/poi-candidates?lat=${group.lat}&lon=${group.lon}`
+        const data = await apiGet<any>(
+          `/api/scan/poi-candidates?lat=${group.lat}&lon=${group.lon}`
         );
-        const data = await res.json();
         setPoiGroups((prev) =>
           prev.map((g, i) =>
             i === idx ? { ...g, loadingCandidates: false, candidates: data.candidates || [] } : g
@@ -814,17 +811,12 @@ export default function ScanPage() {
     );
 
     try {
-      const res = await fetch(`${API}/api/scan/poi-group`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          province: group.province,
-          city: group.city,
-          old_poi: group.poi,
-          new_poi: group.draft ?? "",
-        }),
+      const json = await apiPut<any>("/api/scan/poi-group", {
+        province: group.province,
+        city: group.city,
+        old_poi: group.poi,
+        new_poi: group.draft ?? "",
       });
-      const json = await res.json();
       if (json.success) {
         addLog(`POI 更新：${group.city} / ${group.poi || "（无）"} → ${group.draft || "（无）"}`);
         setPoiGroups((prev) =>
@@ -1578,11 +1570,11 @@ export default function ScanPage() {
                             className="aspect-square bg-slate-900 rounded overflow-hidden border border-slate-700/40 cursor-zoom-in group/thumb"
                             title="点击查看大图"
                             onClick={() => setLightboxSrc(
-                              `${API}/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=1200&quality=90`
+                              backendUrl(`/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=1200&quality=90`)
                             )}
                           >
                             <img
-                              src={`${API}/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=120&quality=75`}
+                              src={backendUrl(`/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=120&quality=75`)}
                               alt={f.name}
                               loading="lazy"
                               className="w-full h-full object-cover group-hover/thumb:scale-105 transition-transform duration-150"
