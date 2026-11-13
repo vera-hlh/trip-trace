@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import init_db
+from app.core.logging_config import configure_logging
 from app.api import (
     archive,
     config,
@@ -18,6 +19,8 @@ from app.api import (
     trips,
     video,
 )
+
+configure_logging()
 
 app = FastAPI(
     title="TripTrace API",

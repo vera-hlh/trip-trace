@@ -9,6 +9,7 @@ import hashlib
 import io
 import logging
 import os
+import time
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -19,6 +20,71 @@ from app.core.database import app_data_dir
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_LAST_CLEANUP = 0.0
+_CLEANUP_INTERVAL_SECONDS = 3600
+
+
+def cleanup_thumbnail_cache(
+    max_bytes: int | None = None,
+    max_age_days: int | None = None,
+) -> dict:
+    """删除过期缩略图；超过容量时按 mtime 从最旧开始删。"""
+    if max_bytes is None:
+        max_bytes = int(os.environ.get("TRIPRACE_THUMBNAIL_MAX_MB", "512")) * 1024 * 1024
+    if max_age_days is None:
+        max_age_days = int(os.environ.get("TRIPRACE_THUMBNAIL_TTL_DAYS", "30"))
+
+    cache_dir = _cache_dir()
+    if not cache_dir.exists():
+        return {"removed": 0, "freed_bytes": 0}
+
+    now = time.time()
+    entries: list[tuple[Path, float, int]] = []
+    removed = 0
+    freed = 0
+
+    for path in cache_dir.glob("*.jpg"):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        if max_age_days > 0 and now - stat.st_mtime > max_age_days * 86400:
+            try:
+                path.unlink()
+                removed += 1
+                freed += stat.st_size
+            except OSError:
+                pass
+        else:
+            entries.append((path, stat.st_mtime, stat.st_size))
+
+    total = sum(size for _, _, size in entries)
+    if total > max_bytes:
+        target = int(max_bytes * 0.8)
+        for path, _, size in sorted(entries, key=lambda item: item[1]):
+            if total <= target:
+                break
+            try:
+                path.unlink()
+                removed += 1
+                freed += size
+                total -= size
+            except OSError:
+                pass
+
+    return {"removed": removed, "freed_bytes": freed}
+
+
+def _maybe_cleanup_thumbnail_cache() -> None:
+    global _LAST_CLEANUP
+    if time.monotonic() - _LAST_CLEANUP < _CLEANUP_INTERVAL_SECONDS:
+        return
+    _LAST_CLEANUP = time.monotonic()
+    try:
+        cleanup_thumbnail_cache()
+    except Exception as exc:
+        logger.warning("清理缩略图缓存失败: %s", exc)
 
 
 def _cache_dir() -> Path:
@@ -109,6 +175,7 @@ async def get_thumbnail(
         )
         try:
             await asyncio.to_thread(_write_cache, cache_file, jpeg_bytes)
+            await asyncio.to_thread(_maybe_cleanup_thumbnail_cache)
         except OSError as exc:
             logger.warning("写入缩略图缓存失败 %s: %s", cache_file, exc)
 

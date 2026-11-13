@@ -340,6 +340,11 @@ async def run_plan(
 
     await db.commit()
 
+    logger.info(
+        "plan.execute.complete plan=%s copied=%d skipped=%d errors=%d remarks=%d elapsed=%.1fs",
+        plan.id, copied, skipped, errors, remarks_written, time.time() - started,
+    )
+
     yield {
         "type": "complete",
         "plan_id": plan.id,

@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from datetime import datetime
 from typing import AsyncGenerator
 
@@ -90,6 +91,7 @@ async def scan_folder_endpoint(
         raise HTTPException(status_code=400, detail=f"文件夹不存在: {folder_path}")
 
     async def generate() -> AsyncGenerator[str, None]:
+        started = time.perf_counter()
         try:
             # 扫描文件列表
             yield _sse_event({"type": "scanning", "message": "正在枚举文件..."})
@@ -207,6 +209,12 @@ async def scan_folder_endpoint(
             # 最终提交所有未提交的记录
             await db.commit()
 
+            elapsed = time.perf_counter() - started
+            logger.info(
+                "scan.complete folder=%s files=%d new=%d skipped=%d gps=%d errors=%d elapsed=%.2fs",
+                folder_path, total, total - skipped, skipped, with_gps, errors, elapsed,
+            )
+
             yield _sse_event({
                 "type": "complete",
                 "total_files": total,
@@ -221,7 +229,11 @@ async def scan_folder_endpoint(
             })
 
         except Exception as e:
-            logger.error(f"扫描过程中发生未预期错误: {e}", exc_info=True)
+            logger.error(
+                "scan.failed folder=%s elapsed=%.2fs error=%s",
+                folder_path, time.perf_counter() - started, e,
+                exc_info=True,
+            )
             yield _sse_event({"type": "fatal_error", "message": str(e)})
 
     return StreamingResponse(
@@ -514,6 +526,7 @@ async def geocode_scanned_files(
     from datetime import datetime as _dt
 
     gaode_key = settings.gaode_api_key  # 读取 .env 中的 Key
+    started = time.perf_counter()
 
     force_repoi = (body.force_repoi if body else False)
     trip_type = (body.trip_type if body else "mixed")
@@ -690,6 +703,11 @@ async def geocode_scanned_files(
                 anomaly_files.append(f.file_name)
 
     gaode_note = f"（高德 API 调用 {api_calls} 次）" if gaode_key else "（未配置高德 Key，仅离线模式）"
+    logger.info(
+        "geocode.complete trip_type=%s force_repoi=%s files=%d updated=%d api_calls=%d errors=%d elapsed=%.2fs",
+        trip_type, force_repoi, len(files), updated, api_calls, errors,
+        time.perf_counter() - started,
+    )
     return {
         "success": True,
         "updated": updated,
