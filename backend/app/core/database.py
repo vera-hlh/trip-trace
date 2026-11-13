@@ -71,6 +71,9 @@ async def _run_migrations() -> None:
         ("files",  "township",       "VARCHAR"),   # v0.8.x - 乡镇行政区划
         ("files",  "geocode_source", "VARCHAR"),   # v0.9.x - 编码来源 'gaode'|'offline'
         ("files",  "poi_type",       "VARCHAR"),   # v0.10.x - POI 类型字符串（供前端分层显示）
+        ("geocode_cache", "country_code", "VARCHAR"),
+        ("geocode_cache", "township",     "VARCHAR"),
+        ("geocode_cache", "poi_type",     "VARCHAR"),
     ]
 
     async with AsyncSessionLocal() as session:

@@ -487,9 +487,9 @@ async def geocode_scanned_files(
       3. 高德地图 API（若已配置 Key，则获取精确中文地名 + POI 景点名）
 
     trip_type 参数：
-      "domestic" = 国内行程（只用高德，境外坐标标记为异常）
-      "abroad"   = 境外行程（跳过高德，中国坐标标记为异常）
-      "mixed"    = 混合行程（国内高德 + 境外离线，无异常检测）
+      "domestic" = 国内行程（国界 + 50km 缓冲内走高德，境外坐标标记异常）
+      "abroad"   = 境外行程（境外坐标离线，中国坐标仍解析但标记异常）
+      "mixed"    = 混合行程（按坐标判定，无异常检测）
 
     返回更新数量统计 + 异常文件摘要
     """
@@ -500,6 +500,13 @@ async def geocode_scanned_files(
         PoiClusterState,
         allow_geocode_online,
         is_china_anomaly,
+        make_cache_key,
+    )
+    from app.services.geocode_cache import (
+        cache_is_usable,
+        load_cache,
+        location_from_row,
+        store_location,
     )
     from datetime import datetime as _dt
 
@@ -544,46 +551,79 @@ async def geocode_scanned_files(
     updated = 0
     errors = 0
     api_calls = 0
+    cache_map = await load_cache(db)
+    estimated_calls = 0
 
     # POI 聚类（force_repoi 模式下禁用，避免跨文件复用错误POI）
     poi_clusters: list[PoiClusterState] = [] if not force_repoi else []
 
-    for f in files:
-        if not f.latitude or not f.longitude:
-            continue
-        try:
-            # 解析拍摄时间（用于 POI 聚类时间判断）
-            dt = None
-            if f.datetime_original:
-                try:
-                    dt = _dt.fromisoformat(f.datetime_original)
-                    if dt.tzinfo:
-                        dt = dt.replace(tzinfo=None)
-                except (ValueError, AttributeError):
-                    pass
+    if force_repoi:
+        # 按 100m 网格分组，同一地点只调用一次 API
+        groups: dict[tuple[float, float], list] = {}
+        for f in files:
+            if not f.latitude or not f.longitude:
+                continue
+            if not allow_geocode_online(f.latitude, f.longitude, trip_type):
+                continue
+            key = make_cache_key(f.latitude, f.longitude)
+            groups.setdefault(key, []).append(f)
 
-            if force_repoi:
-                # force_repoi 模式：按 trip_type 策略决定是否允许在线查询
-                if not allow_geocode_online(f.latitude, f.longitude, trip_type):
-                    continue
-                from app.services.geocode_service import reverse_geocode_gaode
-                online_loc = await reverse_geocode_gaode(f.latitude, f.longitude, gaode_key)
-                api_calls += 1
-                if online_loc and online_loc.poi:
-                    f.poi = online_loc.poi
-                    updated += 1
-                    logger.info(f"force_repoi: {f.file_name} → poi={online_loc.poi!r}")
+        estimated_calls = len(groups)
+        from app.services.geocode_service import reverse_geocode_gaode
+
+        for key, group in groups.items():
+            first = group[0]
+            cached = cache_map.get(key)
+            if cached and cached.poi:
+                loc = location_from_row(cached)
             else:
-                # 正常模式：调用三层统一接口
-                loc, api_called = await get_location(
-                    lat=f.latitude,
-                    lon=f.longitude,
-                    dt=dt,
-                    gaode_api_key=gaode_key,
-                    poi_clusters=poi_clusters,
-                    time_threshold_hours=settings.small_trip_threshold_hours,
-                    trip_type=trip_type,
+                loc = await reverse_geocode_gaode(first.latitude, first.longitude, gaode_key)
+                api_calls += 1
+                if loc:
+                    store_location(db, cache_map, first.latitude, first.longitude, loc)
+
+            if loc and loc.poi:
+                for f in group:
+                    f.poi = loc.poi
+                    if loc.poi_type:
+                        f.poi_type = loc.poi_type
+                    updated += 1
+                logger.info(
+                    "force_repoi: %s 个文件 → poi=%r（网格 %s）",
+                    len(group), loc.poi, key,
                 )
+    else:
+        for f in files:
+            if not f.latitude or not f.longitude:
+                continue
+            try:
+                # 解析拍摄时间（用于 POI 聚类时间判断）
+                dt = None
+                if f.datetime_original:
+                    try:
+                        dt = _dt.fromisoformat(f.datetime_original)
+                        if dt.tzinfo:
+                            dt = dt.replace(tzinfo=None)
+                    except (ValueError, AttributeError):
+                        pass
+
+                key = make_cache_key(f.latitude, f.longitude)
+                cached = cache_map.get(key)
+                if cache_is_usable(cached, f.latitude, f.longitude, gaode_key, trip_type):
+                    loc = location_from_row(cached)
+                    api_called = False
+                else:
+                    loc, api_called = await get_location(
+                        lat=f.latitude,
+                        lon=f.longitude,
+                        dt=dt,
+                        gaode_api_key=gaode_key,
+                        poi_clusters=poi_clusters,
+                        time_threshold_hours=settings.small_trip_threshold_hours,
+                        trip_type=trip_type,
+                    )
+                    if loc:
+                        store_location(db, cache_map, f.latitude, f.longitude, loc)
 
                 if api_called:
                     api_calls += 1
@@ -621,9 +661,9 @@ async def geocode_scanned_files(
 
                     updated += 1
 
-        except Exception as e:
-            errors += 1
-            logger.warning(f"地理编码失败 {f.file_name}: {e}")
+            except Exception as e:
+                errors += 1
+                logger.warning(f"地理编码失败 {f.file_name}: {e}")
 
     await db.commit()
 
@@ -652,6 +692,7 @@ async def geocode_scanned_files(
         "updated": updated,
         "errors": errors,
         "api_calls": api_calls,
+        "estimated_calls": estimated_calls,
         "total_processed": len(files),
         "trip_type": trip_type,
         "anomaly_count": len(anomaly_files),

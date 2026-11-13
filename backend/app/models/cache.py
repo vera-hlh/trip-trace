@@ -15,10 +15,13 @@ class GeocodeCache(Base):
     lat_key = Column(Float, nullable=False)   # 精度截断至 3 位小数（约 100m 网格）
     lon_key = Column(Float, nullable=False)
     country = Column(String)
+    country_code = Column(String)
     province = Column(String)
     city = Column(String)
     district = Column(String)
+    township = Column(String)
     poi = Column(String)
+    poi_type = Column(String)
     source = Column(String)                   # 'offline' | 'gaode'
     cached_at = Column(String)
 
