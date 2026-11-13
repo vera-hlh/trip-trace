@@ -4,16 +4,61 @@
 GET /api/media/thumbnail  - 返回压缩后的缩略图（JPEG）
 GET /api/media/info       - 获取单个文件的元数据
 """
+import asyncio
+import hashlib
 import io
 import logging
 import os
+from pathlib import Path
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response, JSONResponse
 
+from app.core.database import app_data_dir
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _cache_dir() -> Path:
+    override = os.environ.get("TRIPRACE_THUMBNAIL_DIR")
+    return Path(override) if override else app_data_dir() / "thumbnails"
+
+
+def _cache_file(decoded_path: str, width: int, quality: int) -> Path:
+    stat = os.stat(decoded_path)
+    raw = (
+        f"{os.path.normcase(os.path.abspath(decoded_path))}|"
+        f"{stat.st_size}|{stat.st_mtime_ns}|{width}|{quality}"
+    )
+    key = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return _cache_dir() / f"{key}.jpg"
+
+
+def _render_thumbnail(decoded_path: str, width: int, quality: int) -> bytes:
+    from PIL import Image, ImageOps
+
+    with Image.open(decoded_path) as img:
+        img = ImageOps.exif_transpose(img)
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+
+        orig_w, orig_h = img.size
+        if orig_w > width:
+            ratio = width / orig_w
+            img = img.resize((width, int(orig_h * ratio)), Image.LANCZOS)
+
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        return buf.getvalue()
+
+
+def _write_cache(cache_file: Path, data: bytes) -> None:
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cache_file.with_name(cache_file.name + f".{os.getpid()}.tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, cache_file)
 
 
 @router.get("/media/thumbnail")
@@ -42,37 +87,38 @@ async def get_thumbnail(
         raise HTTPException(status_code=404, detail=f"文件不存在: {decoded_path}")
 
     try:
-        from PIL import Image
+        cache_file = _cache_file(decoded_path, width, quality)
 
-        with Image.open(decoded_path) as img:
-            # 应用 EXIF 方向校正（手机竖拍/横拍时像素数据与显示方向不一致）
-            # ImageOps.exif_transpose 读取 EXIF Orientation tag 并自动旋转/翻转
-            from PIL import ImageOps
-            img = ImageOps.exif_transpose(img)
+        if cache_file.exists():
+            try:
+                cached = await asyncio.to_thread(cache_file.read_bytes)
+                return Response(
+                    content=cached,
+                    media_type="image/jpeg",
+                    headers={
+                        "Cache-Control": "public, max-age=86400",
+                        "Content-Length": str(len(cached)),
+                        "X-Thumbnail-Cache": "hit",
+                    },
+                )
+            except OSError:
+                pass
 
-            # 转为 RGB（处理 RGBA、P 等模式，exif_transpose 后可能改变模式）
-            if img.mode not in ("RGB", "L"):
-                img = img.convert("RGB")
-
-            # 等比缩放
-            orig_w, orig_h = img.size
-            if orig_w > width:
-                ratio = width / orig_w
-                new_h = int(orig_h * ratio)
-                img = img.resize((width, new_h), Image.LANCZOS)
-
-            # 输出到内存 buffer
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=quality, optimize=True)
-            buf.seek(0)
-            jpeg_bytes = buf.read()
+        jpeg_bytes = await asyncio.to_thread(
+            _render_thumbnail, decoded_path, width, quality
+        )
+        try:
+            await asyncio.to_thread(_write_cache, cache_file, jpeg_bytes)
+        except OSError as exc:
+            logger.warning("写入缩略图缓存失败 %s: %s", cache_file, exc)
 
         return Response(
             content=jpeg_bytes,
             media_type="image/jpeg",
             headers={
-                "Cache-Control": "public, max-age=3600",  # 缓存 1 小时
+                "Cache-Control": "public, max-age=86400",
                 "Content-Length": str(len(jpeg_bytes)),
+                "X-Thumbnail-Cache": "miss",
             },
         )
 

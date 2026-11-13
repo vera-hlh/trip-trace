@@ -95,7 +95,7 @@ async def scan_folder_endpoint(
             yield _sse_event({"type": "scanning", "message": "正在枚举文件..."})
             await asyncio.sleep(0)  # 让出控制权，确保 SSE 先发出
 
-            file_paths, skipped_dirs = scan_folder(folder_path)
+            file_paths, skipped_dirs = await asyncio.to_thread(scan_folder, folder_path)
             total = len(file_paths)
 
             if total == 0:
@@ -116,16 +116,18 @@ async def scan_folder_endpoint(
             errors = 0
             skipped = 0
 
+            # 一次性预加载已扫描路径，避免每文件一次 SELECT
+            existing_paths = set(
+                (await db.execute(select(MediaFile.original_path))).scalars().all()
+            )
+
             for idx, file_path in enumerate(file_paths, start=1):
                 current = idx
                 filename = os.path.basename(file_path)
 
                 try:
-                    # 检查是否已扫描（通过原始路径去重）
-                    existing = await db.execute(
-                        select(MediaFile).where(MediaFile.original_path == file_path)
-                    )
-                    if existing.scalar_one_or_none():
+                    # 已扫描（通过原始路径去重）
+                    if file_path in existing_paths:
                         skipped += 1
                         yield _sse_event({
                             "type": "skip", "current": current, "total": total,
@@ -134,8 +136,8 @@ async def scan_folder_endpoint(
                         await asyncio.sleep(0)
                         continue
 
-                    # 提取元数据
-                    data = extract_metadata(file_path)
+                    # 提取元数据（Pillow/mutagen 是阻塞 IO，放到线程池）
+                    data = await asyncio.to_thread(extract_metadata, file_path)
                     if data is None:
                         # 不支持的格式，跳过
                         yield _sse_event({
@@ -161,6 +163,7 @@ async def scan_folder_endpoint(
                         needs_review=data.needs_review,
                     )
                     db.add(media_file)
+                    existing_paths.add(file_path)
 
                     # 每 50 个文件批量提交一次，减少 DB 开销
                     if idx % 50 == 0:

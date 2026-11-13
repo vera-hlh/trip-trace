@@ -24,6 +24,12 @@ from app.utils.path_utils import path_is_within
 
 logger = logging.getLogger(__name__)
 
+
+def _write_text(path: str, content: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
 # 超过此大小的文件只校验 size，避免对超大视频做两次全量 SHA-256
 HASH_LIMIT_BYTES = 64 * 1024 * 1024
 
@@ -189,7 +195,7 @@ async def run_plan(
         created_target = False
         try:
             if os.path.exists(target):
-                if _same_content(media_file.original_path, target):
+                if await asyncio.to_thread(_same_content, media_file.original_path, target):
                     skipped += 1
                     pf.status = "skipped"
                     yield {"type": "skip", "current": index, "total": total,
@@ -197,11 +203,13 @@ async def run_plan(
                     continue
                 raise FileExistsError("目标已存在且内容不同，拒绝覆盖")
 
-            os.makedirs(os.path.dirname(target), exist_ok=True)
+            await asyncio.to_thread(
+                os.makedirs, os.path.dirname(target), exist_ok=True
+            )
             created_target = True
-            shutil.copy2(media_file.original_path, target)
+            await asyncio.to_thread(shutil.copy2, media_file.original_path, target)
 
-            if not _same_content(media_file.original_path, target):
+            if not await asyncio.to_thread(_same_content, media_file.original_path, target):
                 raise IOError("复制校验失败：size/SHA-256 不一致")
 
             pf.status = "copied"
@@ -222,7 +230,7 @@ async def run_plan(
                         trip_name=(big.display_name or big.folder_name) if big else "",
                         sub_trip_name=(sub.display_name or sub.folder_name) if sub else "",
                     )
-                    result = write_remark(target, text)
+                    result = await asyncio.to_thread(write_remark, target, text)
                     if result.success:
                         remarks_written += 1
                     yield {"type": "remark", "current": index, "total": total,
@@ -237,7 +245,7 @@ async def run_plan(
         except Exception as exc:
             if created_target and os.path.exists(target):
                 try:
-                    os.remove(target)
+                    await asyncio.to_thread(os.remove, target)
                 except OSError:
                     logger.warning("清理未完成的目标文件失败: %s", target)
             errors += 1
@@ -259,8 +267,9 @@ async def run_plan(
             content = _plan_trip_log(
                 plan, big, [s for s in subs.values() if s.parent_id == big.id], counts
             )
-            with open(os.path.join(big_dir, "trip_log.md"), "w", encoding="utf-8") as f:
-                f.write(content)
+            await asyncio.to_thread(
+                _write_text, os.path.join(big_dir, "trip_log.md"), content
+            )
             trip_log_count += 1
         except Exception as exc:
             logger.warning("生成 trip_log.md 失败 %s: %s", big.folder_name, exc)
