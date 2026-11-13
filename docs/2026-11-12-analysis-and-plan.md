@@ -311,6 +311,8 @@ M4/M5/M6 可在 M2 之后并行；M9 在 1.0 之后。
 > 尚未实现：`DELETE` 方案、按时间拆分、执行幂等/只重试失败项、`planId` 跨重启持久化。
 > 旧 `preview` / `execute` 已标记 deprecated，保留到 M7 前删除。
 >
+> **清理状态（2026-11-13）**：旧 `preview` / `execute` 与前端兼容分支已删除；`TestConsole`、未使用的 `Home` 页面已删除；`start-dev.ps1` 不再全局杀 Python；方案请求模型移入 `plans.py`。
+>
 > **M3 状态（2026-11-13）**：同名冲突、复制校验、cleanup 回收站、目录名净化、路径前缀、DB/.env 用户目录均已完成；127 tests 通过。
 
 ### 12.1 表

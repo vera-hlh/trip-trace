@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api.archive import ArchiveOptions
+from app.api.plans import ArchiveOptions
 from app.api.plans import (
     TripMerge,
     PlanPatchRequest,

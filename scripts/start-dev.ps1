@@ -8,16 +8,18 @@ Write-Host "🚀 启动 TripTrace 开发环境..." -ForegroundColor Cyan
 
 # ── 停止旧进程 ──────────────────────────────────────────────
 
-# 停止旧的 Python（后端）进程
-Get-Process -Name python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-
-# 停止占用 5173 端口的进程（旧的 Vite/Node 进程）
-$port5173 = netstat -ano 2>$null | Select-String "TCP.*:5173\s.*LISTENING" |
+# 只停止占用 17890 且确实是 TripTrace 后端的进程，避免误杀其他 Python
+$port17890 = netstat -ano 2>$null | Select-String "TCP.*:17890\s.*LISTENING" |
     ForEach-Object { ($_.ToString().Trim() -split '\s+')[-1] } |
     Select-Object -First 1
-if ($port5173) {
-    Stop-Process -Id ([int]$port5173) -Force -ErrorAction SilentlyContinue
-    Write-Host "⚠️  已停止端口 5173 的旧进程 (PID: $port5173)" -ForegroundColor Yellow
+if ($port17890) {
+    $oldBackend = Get-CimInstance Win32_Process -Filter "ProcessId = $port17890" -ErrorAction SilentlyContinue
+    if ($oldBackend -and $oldBackend.CommandLine -match 'uvicorn_config\.py') {
+        Stop-Process -Id ([int]$port17890) -Force -ErrorAction SilentlyContinue
+        Write-Host "⚠️  已停止旧后端 (PID: $port17890)" -ForegroundColor Yellow
+    } else {
+        Write-Host "⚠️  端口 17890 被其他进程占用（PID: $port17890），未自动停止" -ForegroundColor Yellow
+    }
 }
 
 Start-Sleep -Seconds 1
@@ -62,5 +64,4 @@ if ($frontendOk -eq 200) {
 Write-Host ""
 Write-Host "✅ 开发环境启动完成！" -ForegroundColor Green
 Write-Host "   📌 前端地址: http://localhost:5173" -ForegroundColor White
-Write-Host "   🔧 测试控制台: 通过侧边栏「测试控制台」进入（非URL路由）" -ForegroundColor DarkGray
 Write-Host "   💡 如遇脚本无法运行: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser" -ForegroundColor DarkGray

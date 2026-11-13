@@ -10,8 +10,8 @@
  */
 import { useState } from "react";
 import { useAppStore } from "@/store/appStore";
-import type { BigTripData, TripContainer } from "@/store/appStore";
-import {executeArchivePlan, patchArchivePlan, apiPost, backendUrl} from "@/api/backend";
+import type { BigTripData } from "@/store/appStore";
+import { executeArchivePlan, patchArchivePlan, apiPost } from "@/api/backend";
 import clsx from "clsx";
 
 // ── 类型定义 ─────────────────────────────────────────────────
@@ -47,31 +47,6 @@ interface ExecuteStats {
 }
 
 type PageStep = "review" | "executing" | "done";
-
-// ── 辅助：构建 trip_overrides（只包含被用户修改过的条目）──────
-
-function buildTripOverrides(trips: BigTripData[]) {
-  return trips
-    .map((big) => {
-      const subOverrides = big.sub_trips
-        .filter((sub) => sub.displayName !== sub.folder)
-        .map((sub) => ({
-          original_folder: sub.folder,
-          display_name: sub.displayName,
-        }));
-
-      if (big.displayName === big.folder && subOverrides.length === 0) {
-        return null; // 未修改，跳过
-      }
-
-      return {
-        original_folder: big.folder,
-        display_name: big.displayName,
-        sub_overrides: subOverrides,
-      };
-    })
-    .filter(Boolean);
-}
 
 // ── 进度条 ───────────────────────────────────────────────────
 
@@ -217,22 +192,6 @@ function TripPreview({ trips }: { trips: BigTripData[] }) {
 
 // ── 主页面 ───────────────────────────────────────────────────
 
-// ── 辅助：构建 containers 参数（行程重建模式使用）────────────
-
-function buildContainersPayload(trips: BigTripData[]) {
-  return trips
-    .filter((big) => big.containers && big.containers.length > 0)
-    .map((big) => ({
-      big_trip_folder: big.folder,
-      items: (big.containers as TripContainer[]).map((c) => ({
-        container_name: c.displayName,
-        sub_trip_folders: c.subTripIndices
-          .map((i) => big.sub_trips[i]?.folder)
-          .filter(Boolean),
-      })),
-    }));
-}
-
 /**
  * 把前端当前的本地编辑转换成 plan PATCH。
  * 目前只同步重命名与容器；结构性合并由 M2.5c 接管。
@@ -314,47 +273,24 @@ export default function ArchivePage() {
     setEvents([]);
     setStats(null);
 
-    const overrides = buildTripOverrides(tripStructure);
-
     try {
-      let response: Response;
-      if (currentPlanId) {
-        // 先把本地重命名/容器同步到方案，再执行
-        const patch = buildPlanPatch(tripStructure, planVersion);
-        if (patch) {
-          const patched = await patchArchivePlan(currentPlanId, patch);
-          if (!patched.success) {
-            throw new Error(patched.error || "同步方案编辑失败");
-          }
-          setPlanVersion(patched.data.plan_version);
-        }
-        response = await executeArchivePlan(currentPlanId, {
-          write_remarks: writeRemarks,
-          remark_template: remarkTemplate,
-        });
-      } else {
-        // 兼容：旧会话没有 planId 时走旧接口
-        response = await fetch(backendUrl("/api/archive/execute"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            folder_path: sourceFolderPath,
-            output_path: outputFolderPath,
-            options: {
-              big_trip_threshold_days: settings.bigTripThresholdDays,
-              small_trip_threshold_hours: settings.smallTripThresholdHours,
-            },
-            write_remarks: writeRemarks,
-            remark_template: remarkTemplate,
-            trip_overrides: overrides,
-            trip_type: tripType,
-            archive_mode: archiveMode ?? "tree",
-            containers: (archiveMode === "rebuild" || archiveMode === "mixed")
-              ? buildContainersPayload(tripStructure)
-              : [],
-          }),
-        });
+      if (!currentPlanId) {
+        throw new Error("当前会话没有归档方案，请回扫描页重新生成方案后再执行。");
       }
+
+      // 先把本地重命名/容器同步到方案，再执行
+      const patch = buildPlanPatch(tripStructure, planVersion);
+      if (patch) {
+        const patched = await patchArchivePlan(currentPlanId, patch);
+        if (!patched.success) {
+          throw new Error(patched.error || "同步方案编辑失败");
+        }
+        setPlanVersion(patched.data.plan_version);
+      }
+      const response = await executeArchivePlan(currentPlanId, {
+        write_remarks: writeRemarks,
+        remark_template: remarkTemplate,
+      });
 
       const reader = response.body!.getReader();
       const decoder = new TextDecoder();

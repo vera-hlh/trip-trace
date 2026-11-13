@@ -22,7 +22,7 @@ export interface AppSettings {
   copyMode: boolean; // true=复制, false=移动
 }
 
-// ── 行程树数据结构（来自 archive/preview，可用户编辑）────────
+// ── 行程树数据结构（来自归档方案 API，可用户编辑）────────
 
 export interface SubTripFileItem {
   name: string;   // 文件名（如 IMG_20250201_143440.jpg）

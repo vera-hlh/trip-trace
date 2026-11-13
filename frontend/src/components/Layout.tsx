@@ -24,7 +24,6 @@ const NAV_ITEMS: NavItem[] = [
   { id: "map",          label: "地图",       icon: "🗺️" },
   { id: "my-trips",     label: "我的旅迹",   icon: "📔", dividerAfter: true },
   { id: "history",      label: "操作记录",   icon: "📋" },
-  { id: "test",         label: "测试控制台", icon: "🧪" },
 ];
 
 // ── 侧边栏 ───────────────────────────────────────────────────

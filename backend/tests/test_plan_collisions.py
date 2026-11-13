@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api.archive import ArchiveOptions
+from app.api.plans import ArchiveOptions
 from app.api.plans import build_plan_from_files
 from app.core.database import Base
 from app.models import archive_log, archive_plan, file, trip, trip_record  # noqa: F401

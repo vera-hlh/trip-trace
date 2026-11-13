@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.core.database import Base
 from app.models import archive_plan, file, trip  # noqa: F401  注册表
 from app.models.archive_plan import ArchivePlan, PlanFile, PlanTrip
-from app.api.archive import ArchiveOptions
+from app.api.plans import ArchiveOptions
 from app.api.plans import build_plan_from_files, get_plan
 
 

@@ -14,7 +14,6 @@ import ArchivePage from "@/pages/ArchivePage";
 import MapPage from "@/pages/MapPage";
 import MyTripsPage from "@/pages/MyTripsPage";
 import HistoryPage from "@/pages/HistoryPage";
-import TestConsole from "@/pages/TestConsole";
 
 function PageRouter() {
   const { currentPage } = useAppStore();
@@ -28,7 +27,6 @@ function PageRouter() {
     case "map":          return <MapPage />;
     case "my-trips":     return <MyTripsPage />;
     case "history":      return <HistoryPage />;
-    case "test":         return <TestConsole />;
     default:             return <HomePage />;
   }
 }

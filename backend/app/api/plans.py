@@ -3,7 +3,7 @@
 - POST /api/archive/plans      生成方案（落库，不执行）
 - GET  /api/archive/plans/{id} 读取方案树 + 文件明细
 
-执行仍由 /api/archive/execute 负责；M2.4 会改为消费 plan_id。
+执行由 /api/archive/plans/{id}/execute 负责。
 """
 import json
 import logging
@@ -16,17 +16,13 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.archive import (
-    ArchiveOptions,
-    ArchiveRequest,
-    _build_media_items,
-    _load_db_files,
-)
+from app.api.archive import _load_db_files
 from app.core.database import get_db
 from app.models.archive_plan import ArchivePlan, PlanFile, PlanTrip
 from app.models.file import MediaFile
 from app.services.archive_service import (
     ArchiveConfig,
+    MediaItem,
     infer_location_for_gps_less,
     segment_into_trips,
 )
@@ -41,6 +37,21 @@ router = APIRouter()
 # ============================================================
 # 请求模型
 # ============================================================
+
+class ArchiveOptions(BaseModel):
+    big_trip_threshold_days: int = 30
+    small_trip_threshold_hours: float = 2.0
+    granularity: str = "city"
+    remark_template: str = "地点: {country}/{province}/{city}/{poi}"
+    enable_gaode: bool = False
+    gaode_api_key: str = ""
+
+
+class ArchiveRequest(BaseModel):
+    folder_path: str
+    output_path: str
+    options: ArchiveOptions = ArchiveOptions()
+
 
 class TripRename(BaseModel):
     trip_id: int
@@ -68,6 +79,39 @@ class PlanPatchRequest(BaseModel):
 class PlanExecuteRequest(BaseModel):
     write_remarks: bool = False
     remark_template: str = "地点: {country}/{province}/{city}/{poi}"
+
+
+def _build_media_items(db_files: list) -> list[MediaItem]:
+    media_items = []
+    for f in db_files:
+        dt = None
+        if f.datetime_original:
+            try:
+                dt = datetime.fromisoformat(f.datetime_original)
+                if dt.tzinfo is not None:
+                    dt = dt.replace(tzinfo=None)
+            except (ValueError, AttributeError):
+                pass
+
+        location_key = ""
+        if f.has_gps and f.city:
+            location_key = f"{f.country or 'CN'}/{f.province or ''}/{f.city}"
+
+        media_items.append(MediaItem(
+            file_path=f.original_path,
+            file_name=f.file_name,
+            datetime_original=dt,
+            location_key=location_key,
+            city=f.city or "",
+            province=f.province or "",
+            district=f.district or "",
+            township=getattr(f, "township", "") or "",
+            poi=f.poi or "",
+            country=f.country or "",
+            country_code=f.country or "CN",
+            has_gps=f.has_gps,
+        ))
+    return media_items
 
 
 

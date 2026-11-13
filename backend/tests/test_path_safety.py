@@ -7,7 +7,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api.archive import ArchiveOptions, _load_db_files
+from app.api.archive import _load_db_files
+from app.api.plans import ArchiveOptions
 from app.api.plans import PlanPatchRequest, TripRename, build_plan_from_files, patch_plan
 from app.core.database import Base
 from app.models import archive_log, archive_plan, file, trip, trip_record  # noqa: F401

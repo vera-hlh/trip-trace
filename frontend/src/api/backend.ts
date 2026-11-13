@@ -134,14 +134,6 @@ export async function getTrips() {
   return apiJson("/api/trips");
 }
 
-export async function archivePreview(body: object) {
-  return requestJson("/api/archive/preview", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
 export async function createArchivePlan(body: object) {
   return requestJson("/api/archive/plans", {
     method: "POST",

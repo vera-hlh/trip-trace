@@ -266,20 +266,6 @@ export default function HomePage() {
           先点击「选择文件夹」配置源目录和输出目录，然后进行扫描和归档。
         </div>
       )}
-
-      {/* 开发工具 */}
-      <div className="mt-8 pt-6 border-t border-slate-700/40">
-        <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-          开发工具
-        </h2>
-        <button
-          onClick={() => setCurrentPage("test")}
-          className="w-full text-left p-4 rounded-xl bg-slate-800/40 border border-slate-700/40 hover:border-slate-600 transition-colors"
-        >
-          <span className="text-sm text-slate-400">🧪 后端 API 测试控制台</span>
-          <span className="text-xs text-slate-600 ml-2">Phase 2 验证工具</span>
-        </button>
-      </div>
     </div>
   );
 }
