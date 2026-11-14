@@ -427,6 +427,8 @@ class PoiClusterState:
     district: str = ""      # 区县
     township: str = ""      # 乡镇
     country: str = ""       # 国家
+    poi_type: str = ""      # POI 类型（聚类命中时保留）
+    source: str = "offline" # 首次识别来源：gaode / nominatim / overpass / offline
     radius_m: float = 500.0
     file_count: int = 0
     last_datetime: Optional[datetime] = None
@@ -980,7 +982,8 @@ async def get_location(
                     district=cluster.district,
                     township=cluster.township,
                     poi=cluster.poi_name,
-                    source="offline",
+                    poi_type=cluster.poi_type,
+                    source=cluster.source,
                 ), False
 
     # 第一层：离线查询（获取省市信息）
@@ -1070,6 +1073,8 @@ async def get_location(
             district=location.district,
             township=location.township,
             country=location.country,
+            poi_type=location.poi_type,
+            source=location.source,
             last_datetime=dt,
             file_count=1,
         )

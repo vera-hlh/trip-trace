@@ -4,6 +4,7 @@ import asyncio
 from app.services import geocode_service
 from app.services.geocode_service import (
     GeoLocation,
+    PoiClusterState,
     allow_geocode_online,
     get_location,
     is_china_anomaly,
@@ -135,6 +136,32 @@ def test_anomaly_domestic_foreign_and_abroad_china():
     assert is_china_anomaly(37.57, 126.98, "domestic") is True
     assert is_china_anomaly(39.9042, 116.4074, "abroad") is True
     assert is_china_anomaly(39.9042, 116.4074, "mixed") is False
+
+
+def test_cluster_preserves_source_and_poi_type():
+    cluster = PoiClusterState(
+        poi_name="长白山星野溪谷度假景区",
+        city="延边朝鲜族自治州",
+        center_lat=42.4223747,
+        center_lon=128.1092529,
+        province="吉林省",
+        district="安图县",
+        country="中国",
+        poi_type="风景名胜",
+        source="gaode",
+    )
+    loc, called = asyncio.run(
+        get_location(
+            lat=42.4223747,
+            lon=128.1092529,
+            gaode_api_key="",
+            poi_clusters=[cluster],
+        )
+    )
+    assert called is False
+    assert loc.source == "gaode"
+    assert loc.poi_type == "风景名胜"
+    assert loc.poi == cluster.poi_name
 
 
 def test_missing_boundary_falls_back_to_bbox(monkeypatch):
