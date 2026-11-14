@@ -110,6 +110,7 @@ cd backend
 - [2026-11-12 分析报告与实施计划](docs/2026-11-12-analysis-and-plan.md)（当前权威）
 - [M7 验证计划与记录](docs/2026-11-13-m7-validation.md)
 - [真实样本验证（东北边境）](docs/2026-11-14-real-sample-validation.md)
+- [真实样本验证（越南游轮）](docs/2026-11-14-vietnam-sample-validation.md)
 - [Overpass 境外景点后续事项](docs/2026-11-13-overpass-followup.md)
 - [项目总览（历史快照）](docs/project-overview.md)
 - [技术架构](docs/architecture.md)
