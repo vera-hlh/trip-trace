@@ -53,7 +53,7 @@ function waitForBackend(maxWaitMs = 30_000, intervalMs = 500): Promise<boolean> 
 
 function startBackend() {
   if (isDev) {
-    console.log("[Electron] 开发模式：请手动启动后端");
+    console.log("[Electron] Dev mode: start backend manually");
     return;
   }
 
@@ -115,7 +115,9 @@ function createWindow() {
 
   if (isDev) {
     mainWindow.loadURL("http://localhost:5173");
-    mainWindow.webContents.openDevTools();
+    if (process.env.TRIPRACE_DEVTOOLS === "1") {
+      mainWindow.webContents.openDevTools();
+    }
   } else {
     mainWindow.loadFile(join(__dirname, "../dist/index.html"));
   }
