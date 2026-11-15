@@ -10,7 +10,6 @@
     "package": "electron-builder",
     "preview": "vite preview"
   },
-  "type": "module",
   "keywords": ["photo", "organizer", "travel", "electron"],
   "author": "vera-hlh",
   "license": "MIT",
