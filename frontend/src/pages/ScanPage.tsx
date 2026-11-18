@@ -88,6 +88,7 @@ interface PoiGroup {
   draft?: string;     // 编辑草稿
   areaDraft?: string; // 景区编辑草稿
   areaSaving?: boolean;
+  selected?: boolean;
   editing?: boolean;
   saving?: boolean;
   candidates?: PoiCandidate[] | null;  // 候选 POI 列表（按需加载）
@@ -153,6 +154,8 @@ export default function ScanPage() {
   // POI 审核分组状态
   const [poiGroups, setPoiGroups] = useState<PoiGroup[]>([]);
   const [poiGroupsLoading, setPoiGroupsLoading] = useState(false);
+  const [bulkAreaDraft, setBulkAreaDraft] = useState("");
+  const [bulkAreaSaving, setBulkAreaSaving] = useState(false);
 
   // 大图预览（Lightbox）
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
@@ -459,6 +462,61 @@ export default function ScanPage() {
         prev.map((g, i) => (i === idx ? { ...g, areaSaving: false } : g))
       );
     }
+  };
+
+  // ── 景区审核：批量设置已选组 ───────────────────────────────
+
+  const handleBulkAreaSave = async () => {
+    const selected = poiGroups
+      .map((group, idx) => ({ group, idx }))
+      .filter(({ group }) => group.selected);
+    if (selected.length === 0) {
+      addLog("请先勾选要设置景区的 POI 组");
+      return;
+    }
+
+    setBulkAreaSaving(true);
+    let updated = 0;
+    let failed = 0;
+    for (const { group, idx } of selected) {
+      if ((group.area_name ?? "") === bulkAreaDraft.trim()) continue;
+      try {
+        const json = await apiPut<any>("/api/scan/area-group", {
+          province: group.province,
+          city: group.city,
+          old_area: group.area_name ?? "",
+          old_poi: group.poi ?? "",
+          new_area: bulkAreaDraft.trim(),
+        });
+        if (json.success) {
+          updated += 1;
+          setPoiGroups((prev) =>
+            prev.map((g, i) =>
+              i === idx
+                ? {
+                    ...g,
+                    area_name: json.area_name || "",
+                    area_source: "manual",
+                    area_confidence: 1,
+                    areaDraft: json.area_name || "",
+                    selected: false,
+                  }
+                : g
+            )
+          );
+        } else {
+          failed += 1;
+        }
+      } catch {
+        failed += 1;
+      }
+    }
+    setBulkAreaSaving(false);
+    addLog(
+      `批量设置景区：更新 ${updated} 组` +
+      (failed ? `，失败 ${failed} 组` : "") +
+      ` → ${bulkAreaDraft.trim() || "（清除）"}`
+    );
   };
 
   // ── POI 审核：保存单组修改 ─────────────────────────────────
@@ -1076,6 +1134,45 @@ export default function ScanPage() {
             </button>
           </div>
 
+          {/* 批量景区操作 */}
+          <div className="flex items-center gap-2 flex-wrap bg-slate-800/40 border border-slate-700/40 rounded-lg px-3 py-2">
+            <span className="text-xs text-slate-400">
+              已选 <strong className="text-amber-300">{poiGroups.filter(g => g.selected).length}</strong> 组
+            </span>
+            <button
+              onClick={() => setPoiGroups(prev => prev.map(g => ({ ...g, selected: true })))}
+              className="text-xs text-slate-400 hover:text-slate-200 border border-slate-700 px-2 py-0.5 rounded"
+            >
+              全选
+            </button>
+            <button
+              onClick={() => setPoiGroups(prev => prev.map(g => ({ ...g, selected: false })))}
+              className="text-xs text-slate-400 hover:text-slate-200 border border-slate-700 px-2 py-0.5 rounded"
+            >
+              清空选择
+            </button>
+            <input
+              type="text"
+              value={bulkAreaDraft}
+              onChange={(e) => setBulkAreaDraft(e.target.value)}
+              list="area-name-options"
+              placeholder="批量设置景区名（留空=清除）"
+              className="flex-1 min-w-[12rem] bg-slate-700 border border-amber-600/40 rounded px-2 py-1 text-xs text-white outline-none"
+            />
+            <button
+              onClick={handleBulkAreaSave}
+              disabled={bulkAreaSaving}
+              className="text-xs px-3 py-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded"
+            >
+              {bulkAreaSaving ? "应用中..." : "应用到已选"}
+            </button>
+            <datalist id="area-name-options">
+              {Array.from(new Set(poiGroups.map(g => g.area_name).filter(Boolean))).map(name => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+          </div>
+
           {/* 分组列表 */}
           <div className="space-y-1">
             {poiGroups.map((group, idx) => (
@@ -1093,6 +1190,22 @@ export default function ScanPage() {
                 )}
                 onClick={() => handleToggleExpand(idx)}
               >
+                {/* 批量选择 */}
+                <input
+                  type="checkbox"
+                  checked={!!group.selected}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={() =>
+                    setPoiGroups((prev) =>
+                      prev.map((g, i) =>
+                        i === idx ? { ...g, selected: !g.selected } : g
+                      )
+                    )
+                  }
+                  className="w-3.5 h-3.5 accent-amber-500 flex-shrink-0"
+                  title="勾选后可批量设置景区"
+                />
+
                 {/* 序号 */}
                 <span className="text-slate-600 text-xs font-mono w-5 text-right flex-shrink-0">
                   {idx + 1}
@@ -1159,6 +1272,7 @@ export default function ScanPage() {
                         if (e.key === "Escape") handleToggleExpand(idx);
                       }}
                       placeholder="如：三峡大坝旅游区（留空=清除）"
+                      list="area-name-options"
                       className="flex-1 bg-slate-700 border border-amber-600/50 rounded px-2 py-1 text-sm text-white outline-none"
                     />
                     <button
@@ -1172,6 +1286,33 @@ export default function ScanPage() {
                       {group.area_source || "未识别"}
                     </span>
                   </div>
+
+                  {group.area_candidates && group.area_candidates.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className="text-[10px] text-slate-500">候选：</span>
+                      {group.area_candidates.map((candidate, ci) => (
+                        <button
+                          key={`${candidate.name}-${ci}`}
+                          onClick={() =>
+                            setPoiGroups((prev) =>
+                              prev.map((g, i) =>
+                                i === idx ? { ...g, areaDraft: candidate.name } : g
+                              )
+                            )
+                          }
+                          title={candidate.source || ""}
+                          className={clsx(
+                            "text-[10px] px-2 py-0.5 rounded border transition-colors",
+                            (group.areaDraft ?? "") === candidate.name
+                              ? "bg-amber-900/40 border-amber-600/60 text-amber-300"
+                              : "bg-slate-700/60 border-slate-600 text-slate-300 hover:border-amber-500/60"
+                          )}
+                        >
+                          {candidate.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   {/* 候选 POI 编辑器 */}
                   <div className="space-y-1.5">
