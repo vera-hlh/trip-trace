@@ -21,12 +21,13 @@ from typing import AsyncGenerator
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.models.file import MediaFile
 from app.services.metadata_service import scan_folder, extract_metadata
+from app.utils.path_utils import validate_folder_name
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -45,6 +46,15 @@ class GeocodeRequest(BaseModel):
     """地理编码请求参数"""
     trip_type: str = "mixed"   # "domestic"=国内 | "abroad"=境外 | "mixed"=混合
     force_repoi: bool = False  # True: 重新处理"已有city但poi为空"的文件（修复旧数据）
+
+
+class AreaGroupUpdate(BaseModel):
+    """按 POI 组修正景区（只影响本次文件，不写全局别名）"""
+    province: str = ""
+    city: str = ""
+    old_area: str = ""
+    old_poi: str = ""
+    new_area: str = ""
 
 
 class ScanStatusResponse(BaseModel):
@@ -307,14 +317,22 @@ async def get_geocoded_groups(
     )
     files = result.scalars().all()
 
-    # 按 (province, city, poi) 分组计数，保留第一个 poi_type/坐标/文件路径
+    # 按 (province, city, area, poi) 分组计数，保留第一个类型/坐标/文件路径
     groups: dict[tuple, dict] = {}
     for f in files:
-        key = (f.province or "", f.city or "", f.poi or "")
+        key = (
+            f.province or "",
+            f.city or "",
+            getattr(f, "area_name", "") or "",
+            f.poi or "",
+        )
         if key not in groups:
             groups[key] = {
                 "province": f.province or "",
                 "city": f.city or "",
+                "area_name": getattr(f, "area_name", "") or "",
+                "area_source": getattr(f, "area_source", "") or "",
+                "area_confidence": getattr(f, "area_confidence", 0.0) or 0.0,
                 "poi": f.poi or "",
                 "poi_type": getattr(f, "poi_type", "") or "",
                 "lat": f.latitude,         # 代表性坐标（用于候选 POI 查询）
@@ -327,6 +345,11 @@ async def get_geocoded_groups(
                 # 第一个文件天然是最早的）
                 "earliest_datetime": f.datetime_original or "",
             }
+            if getattr(f, "area_candidates_json", None):
+                try:
+                    groups[key]["area_candidates"] = json.loads(f.area_candidates_json)
+                except (TypeError, ValueError):
+                    groups[key]["area_candidates"] = []
         # 最多收集6个文件路径用于缩略图预览
         if len(groups[key]["files"]) < 6:
             groups[key]["files"].append({
@@ -339,7 +362,7 @@ async def get_geocoded_groups(
     # 同组时间相同时，按省市/POI 字母顺序作为次级排序
     sorted_groups = sorted(
         groups.values(),
-        key=lambda g: (g["earliest_datetime"], g["province"], g["city"], g["poi"])
+        key=lambda g: (g["earliest_datetime"], g["province"], g["city"], g["area_name"], g["poi"])
     )
 
     return {
@@ -358,6 +381,48 @@ class PoiGroupUpdateRequest(BaseModel):
     city: str
     old_poi: str        # 空字符串表示"无POI"
     new_poi: str        # 更新后的 POI 名称（空字符串=清空）
+
+
+@router.put("/scan/area-group")
+async def update_area_group(
+    body: AreaGroupUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """按 (province, city, old_area, old_poi) 批量修正景区。
+
+    只更新当前文件，不写 geocode_cache、不建全局别名。
+    """
+    new_area = body.new_area.strip()
+    if new_area:
+        try:
+            new_area = validate_folder_name(new_area)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"景区名 {exc}")
+
+    conditions = [
+        MediaFile.province == body.province,
+        MediaFile.city == body.city,
+    ]
+    if body.old_poi:
+        conditions.append(MediaFile.poi == body.old_poi)
+    else:
+        conditions.append(or_(MediaFile.poi == "", MediaFile.poi.is_(None)))
+    if body.old_area:
+        conditions.append(MediaFile.area_name == body.old_area)
+    else:
+        conditions.append(or_(MediaFile.area_name == "", MediaFile.area_name.is_(None)))
+
+    result = await db.execute(
+        update(MediaFile)
+        .where(*conditions)
+        .values(
+            area_name=new_area or None,
+            area_source="manual",
+            area_confidence=1.0,
+        )
+    )
+    await db.commit()
+    return {"success": True, "updated": result.rowcount, "area_name": new_area}
 
 
 @router.put("/scan/poi-group")
@@ -739,6 +804,14 @@ async def geocode_scanned_files(
                         f.poi = loc.poi
                     if loc.poi_type:
                         f.poi_type = loc.poi_type  # POI 类型（供前端分层显示）
+                    if loc.area_name:
+                        f.area_name = loc.area_name
+                        f.area_source = loc.area_source
+                        f.area_confidence = loc.area_confidence
+                    if loc.area_candidates:
+                        f.area_candidates_json = json.dumps(
+                            loc.area_candidates, ensure_ascii=False
+                        )
 
                     updated += 1
 

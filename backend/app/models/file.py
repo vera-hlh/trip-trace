@@ -1,5 +1,5 @@
 """媒体文件元数据模型"""
-from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, Text
 from app.core.database import Base
 
 
@@ -22,6 +22,10 @@ class MediaFile(Base):
     township = Column(String)                           # 乡镇（北极镇）← 精确行政区划
     poi = Column(String)                                # 景点/地标名
     poi_type = Column(String)                           # POI 类型字符串（如'风景名胜;风景名胜相关;旅游景点'）
+    area_name = Column(String)                          # 景区/片区（如 三峡大坝旅游区）
+    area_source = Column(String)                        # amap_aoi | amap_parent | amap_nearby | manual
+    area_confidence = Column(Float)
+    area_candidates_json = Column(Text)
     geocode_source = Column(String)                     # 'gaode' | 'offline' | None（未编码）
     remark_written = Column(Boolean, default=False)
     trip_id = Column(Integer, ForeignKey("trips.id"))

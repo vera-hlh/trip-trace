@@ -41,6 +41,10 @@ class GeoLocation:
     township: str = ""      # 乡镇（北极镇）← 行政区划，不依赖搜索半径
     poi: str = ""           # 景点/地标名称（来自 place/around 搜索）
     poi_type: str = ""      # POI 类型字符串（如'风景名胜;风景名胜相关;旅游景点'）
+    area_name: str = ""     # 景区/片区（三峡大坝旅游区）
+    area_source: str = ""   # amap_aoi | amap_parent | amap_nearby | manual
+    area_confidence: float = 0.0
+    area_candidates: list = field(default_factory=list)
     source: str = "offline" # "offline" | "gaode"
 
     @property
@@ -264,20 +268,11 @@ _POI_TYPE_KEYWORDS = [
 ]
 
 
-def _select_best_travel_poi(pois: list) -> tuple[str, str]:
-    """
-    从 POI 列表中选出最佳旅行相关 POI。
-
-    先应用 T1 硬过滤（排除购物/医疗/政府等绝对无关类型），
-    再按关键字优先级 + weight/distance 选最优。
-
-    Returns:
-        (poi_name, poi_type_str) 元组，无匹配则返回 ("", "")
-    """
+def _select_best_travel_poi_object(pois: list) -> Optional[dict]:
+    """从 POI 列表中选出最佳旅行相关 POI 对象。"""
     if not pois:
-        return "", ""
+        return None
 
-    # T1 硬过滤：排除绝对不可能是旅行地标的类型
     filtered: list = []
     for poi in pois:
         type_str = poi.get("type", "") or ""
@@ -285,21 +280,146 @@ def _select_best_travel_poi(pois: list) -> tuple[str, str]:
             filtered.append(poi)
 
     for keyword in _POI_TYPE_KEYWORDS:
-        candidates: list[tuple[float, str, str]] = []
-        for poi in filtered:
+        candidates: list[tuple[float, int, dict]] = []
+        for index, poi in enumerate(filtered):
             type_str = poi.get("type", "") or ""
             if keyword in type_str:
                 name = poi.get("name", "").strip()
-                # place/around 用 distance 排序（已按 weight 排序，用原始顺序 = 用 index 倒序权重）
-                # regeo 用 poiweight
                 weight = float(poi.get("poiweight", 0) or poi.get("weight", 0) or 0)
                 if name:
-                    candidates.append((weight, name, type_str))
+                    # weight 相同的情况下，保留 place/around 的原始顺序
+                    candidates.append((weight, -index, poi))
         if candidates:
-            candidates.sort(reverse=True)
-            return candidates[0][1], candidates[0][2]
+            candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            return candidates[0][2]
+    return None
 
-    return "", ""
+
+def _select_best_travel_poi(pois: list) -> tuple[str, str]:
+    """从 POI 列表中选出最佳旅行相关 POI，返回 (名称, 类型)。"""
+    poi = _select_best_travel_poi_object(pois)
+    if not poi:
+        return "", ""
+    return poi.get("name", "").strip(), poi.get("type", "") or ""
+
+
+# ============================================================
+# 高德景区候选：AOI + 父级 POI 链
+# ============================================================
+
+_AMAP_PARENT_CACHE: dict[str, Optional[dict]] = {}
+
+
+def _amap_area_candidate(
+    poi: dict,
+    source: str,
+    confidence: float,
+    distance: str | float | None = None,
+) -> dict:
+    return {
+        "id": poi.get("id") or "",
+        "name": (poi.get("name") or "").strip(),
+        "type": poi.get("type") or "",
+        "distance": distance if distance is not None else poi.get("distance", ""),
+        "source": source,
+        "confidence": confidence,
+    }
+
+
+def _pick_aoi_candidate(aois: list) -> Optional[dict]:
+    """AOI 中优先选景区类型；否则选最近的景区名称。"""
+    candidates = []
+    for aoi in aois or []:
+        name = (aoi.get("name") or "").strip()
+        if not name:
+            continue
+        type_str = aoi.get("type") or ""
+        # 110202 为高德景区 AOI 类型；也接受名称含景区关键字
+        is_scenic = type_str.startswith("110202") or any(
+            word in name for word in ("景区", "旅游区", "度假区", "风景区")
+        )
+        if not is_scenic:
+            continue
+        try:
+            distance = float(aoi.get("distance") or 999999)
+        except (TypeError, ValueError):
+            distance = 999999
+        candidates.append((0 if type_str.startswith("110202") else 1, distance, aoi))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    best = candidates[0][2]
+    return _amap_area_candidate(
+        best,
+        source="amap_aoi",
+        confidence=0.9,
+        distance=best.get("distance"),
+    )
+
+
+async def _resolve_amap_parent(
+    client,
+    api_key: str,
+    parent_id: str,
+) -> Optional[dict]:
+    """沿 place/detail 的 parent 链向上，返回最高层景区候选。"""
+    if not parent_id:
+        return None
+    if parent_id in _AMAP_PARENT_CACHE:
+        return _AMAP_PARENT_CACHE[parent_id]
+
+    chain: list[dict] = []
+    current = parent_id
+    seen: set[str] = set()
+
+    try:
+        while current and current not in seen and len(chain) < 4:
+            seen.add(current)
+            resp = await client.get(
+                "https://restapi.amap.com/v3/place/detail",
+                params={"key": api_key, "id": current, "output": "json"},
+            )
+            data = resp.json()
+            pois = data.get("pois") or []
+            if not pois:
+                break
+            poi = pois[0]
+            if not poi.get("name"):
+                break
+            chain.append(poi)
+            current = poi.get("parent") or ""
+    except Exception as exc:
+        logger.debug("解析高德父级 POI 失败 %s: %s", parent_id, exc)
+
+    if not chain:
+        _AMAP_PARENT_CACHE[parent_id] = None
+        return None
+
+    # 优先最高层的景区/国家级景点；否则退回最高层 POI
+    selected = chain[-1]
+    for poi in reversed(chain):
+        type_str = poi.get("type") or ""
+        if (
+            type_str.startswith("110202")
+            or "国家级景点" in type_str
+            or type_str == "风景名胜;风景名胜;风景名胜"
+        ):
+            selected = poi
+            break
+
+    type_str = selected.get("type") or ""
+    if "风景名胜" not in type_str and not type_str.startswith("110202"):
+        _AMAP_PARENT_CACHE[parent_id] = None
+        return None
+
+    confidence = 0.85 if (
+        type_str.startswith("110202") or "国家级景点" in type_str
+    ) else 0.65
+    candidate = _amap_area_candidate(
+        selected, source="amap_parent", confidence=confidence
+    )
+    _AMAP_PARENT_CACHE[parent_id] = candidate
+    return candidate
 
 
 async def reverse_geocode_gaode(
@@ -332,11 +452,11 @@ async def reverse_geocode_gaode(
         base_url = "https://restapi.amap.com"
 
         async with httpx.AsyncClient(timeout=8.0) as client:
-            # ── 步骤1：逆地理编码（仅地址，不含 POI）─────────────
+            # ── 步骤1：逆地理编码（地址 + AOI）─────────────────
             regeo_url = (
                 f"{base_url}/v3/geocode/regeo"
                 f"?output=json&location={lon},{lat}&key={api_key}"
-                f"&extensions=base&coordsys=gps"
+                f"&extensions=all&coordsys=gps"
             )
             regeo_resp = await client.get(regeo_url)
             regeo_data = regeo_resp.json()
@@ -345,12 +465,14 @@ async def reverse_geocode_gaode(
                 logger.warning(f"高德 regeo 错误: {regeo_data.get('info')}")
                 return None
 
-            address_comp = regeo_data.get("regeocode", {}).get("addressComponent", {})
+            regeocode = regeo_data.get("regeocode", {})
+            address_comp = regeocode.get("addressComponent", {})
             province = address_comp.get("province", "")
             city = address_comp.get("city", "")
             district = address_comp.get("district", "")
             township_raw = address_comp.get("township", "")
             township = township_raw if isinstance(township_raw, str) else ""
+            aois = regeocode.get("aois", []) or []
 
             if not city or city == []:
                 city = province
@@ -366,13 +488,73 @@ async def reverse_geocode_gaode(
             place_resp = await client.get(place_url)
             place_data = place_resp.json()
 
-        poi_name = ""
-        poi_type_str = ""
-        if place_data.get("status") == "1":
-            pois = place_data.get("pois", [])
-            poi_name, poi_type_str = _select_best_travel_poi(pois)
-        else:
-            logger.debug(f"place/around 未返回结果: {place_data.get('info')}")
+            best_poi = None
+            area_candidate = _pick_aoi_candidate(aois)
+            area_candidates: list[dict] = []
+
+            # AOI 本身可能只是子景区（如坛子岭），继续向上找父级
+            if area_candidate and area_candidate.get("id"):
+                parent_candidate = await _resolve_amap_parent(
+                    client, api_key, str(area_candidate["id"])
+                )
+                if parent_candidate and parent_candidate.get("name") != area_candidate.get("name"):
+                    if parent_candidate.get("confidence", 0) >= area_candidate.get("confidence", 0):
+                        area_candidate = parent_candidate
+
+            # AOI 全部列为候选（只保留景区类型/名称）
+            for aoi in aois:
+                candidate = _amap_area_candidate(
+                    aoi,
+                    source="amap_aoi",
+                    confidence=0.9,
+                    distance=aoi.get("distance"),
+                )
+                name = candidate["name"]
+                type_str = aoi.get("type") or ""
+                if name and (
+                    type_str.startswith("110202")
+                    or any(word in name for word in ("景区", "旅游区", "度假区", "风景区"))
+                ):
+                    area_candidates.append(candidate)
+
+            if place_data.get("status") == "1":
+                pois = place_data.get("pois", [])
+                best_poi = _select_best_travel_poi_object(pois)
+            else:
+                logger.debug(f"place/around 未返回结果: {place_data.get('info')}")
+
+            # 无 AOI 时，沿最佳 POI 的 parent 链向上找景区
+            if area_candidate is None and best_poi and best_poi.get("parent"):
+                area_candidate = await _resolve_amap_parent(
+                    client, api_key, str(best_poi.get("parent"))
+                )
+                if area_candidate:
+                    area_candidates.append(area_candidate)
+
+            # 最后兜底：POI 本身就是“国家级景点/景区/旅游区”
+            if area_candidate is None and best_poi:
+                name = (best_poi.get("name") or "").strip()
+                type_str = best_poi.get("type") or ""
+                if "国家级景点" in type_str or any(
+                    word in name for word in ("景区", "旅游区", "度假区", "风景区")
+                ):
+                    area_candidate = _amap_area_candidate(
+                        best_poi, source="amap_nearby", confidence=0.45
+                    )
+                    area_candidates.append(area_candidate)
+
+        poi_name = best_poi.get("name", "").strip() if best_poi else ""
+        poi_type_str = (best_poi.get("type") or "") if best_poi else ""
+
+        # 候选去重（按名称）
+        unique_candidates: list[dict] = []
+        seen_names: set[str] = set()
+        for candidate in area_candidates:
+            name = candidate.get("name") or ""
+            if not name or name in seen_names:
+                continue
+            seen_names.add(name)
+            unique_candidates.append(candidate)
 
         return GeoLocation(
             country="中国",
@@ -383,6 +565,10 @@ async def reverse_geocode_gaode(
             township=township,
             poi=poi_name,
             poi_type=poi_type_str,
+            area_name=(area_candidate or {}).get("name", ""),
+            area_source=(area_candidate or {}).get("source", ""),
+            area_confidence=float((area_candidate or {}).get("confidence", 0.0) or 0.0),
+            area_candidates=unique_candidates,
             source="gaode",
         )
 
@@ -428,6 +614,10 @@ class PoiClusterState:
     township: str = ""      # 乡镇
     country: str = ""       # 国家
     poi_type: str = ""      # POI 类型（聚类命中时保留）
+    area_name: str = ""     # 景区/片区（聚类命中时保留）
+    area_source: str = ""
+    area_confidence: float = 0.0
+    area_candidates: list = field(default_factory=list)
     source: str = "offline" # 首次识别来源：gaode / nominatim / overpass / offline
     radius_m: float = 500.0
     file_count: int = 0
@@ -983,6 +1173,10 @@ async def get_location(
                     township=cluster.township,
                     poi=cluster.poi_name,
                     poi_type=cluster.poi_type,
+                    area_name=cluster.area_name,
+                    area_source=cluster.area_source,
+                    area_confidence=cluster.area_confidence,
+                    area_candidates=cluster.area_candidates,
                     source=cluster.source,
                 ), False
 
@@ -1010,6 +1204,10 @@ async def get_location(
             location.township = online_loc.township  # 乡镇级行政区（精确，来自高德 addressComponent）
             location.poi = online_loc.poi
             location.poi_type = online_loc.poi_type  # POI 类型字符串（供前端显示）
+            location.area_name = online_loc.area_name or location.area_name
+            location.area_source = online_loc.area_source or location.area_source
+            location.area_confidence = online_loc.area_confidence or location.area_confidence
+            location.area_candidates = online_loc.area_candidates or location.area_candidates
             location.source = "gaode"
             location.country = "中国"
             location.country_code = "CN"
@@ -1074,6 +1272,10 @@ async def get_location(
             township=location.township,
             country=location.country,
             poi_type=location.poi_type,
+            area_name=location.area_name,
+            area_source=location.area_source,
+            area_confidence=location.area_confidence,
+            area_candidates=location.area_candidates,
             source=location.source,
             last_datetime=dt,
             file_count=1,

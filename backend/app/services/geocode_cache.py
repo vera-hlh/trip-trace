@@ -2,6 +2,7 @@
 
 以 (lat, lon) 3 位小数网格为 key，缓存离线/高德结果，避免重复请求。
 """
+import json
 from datetime import datetime
 
 from sqlalchemy import select
@@ -24,6 +25,12 @@ async def load_cache(db: AsyncSession) -> dict[tuple[float, float], GeocodeCache
 
 
 def location_from_row(row: GeocodeCache) -> GeoLocation:
+    candidates = []
+    if row.area_candidates_json:
+        try:
+            candidates = json.loads(row.area_candidates_json)
+        except json.JSONDecodeError:
+            candidates = []
     return GeoLocation(
         country=row.country or "",
         country_code=row.country_code or "",
@@ -33,6 +40,10 @@ def location_from_row(row: GeocodeCache) -> GeoLocation:
         township=row.township or "",
         poi=row.poi or "",
         poi_type=row.poi_type or "",
+        area_name=row.area_name or "",
+        area_source=row.area_source or "",
+        area_confidence=row.area_confidence or 0.0,
+        area_candidates=candidates,
         source=row.source or "offline",
     )
 
@@ -90,5 +101,13 @@ def store_location(
     row.township = location.township or row.township
     row.poi = location.poi or row.poi
     row.poi_type = location.poi_type or row.poi_type
+    row.area_name = location.area_name or row.area_name
+    row.area_source = location.area_source or row.area_source
+    if location.area_confidence:
+        row.area_confidence = location.area_confidence
+    if location.area_candidates:
+        row.area_candidates_json = json.dumps(
+            location.area_candidates, ensure_ascii=False
+        )
     row.source = location.source or row.source or "offline"
     row.cached_at = datetime.now().isoformat(timespec="seconds")

@@ -73,6 +73,10 @@ interface PoiCandidate {
 interface PoiGroup {
   province: string;
   city: string;
+  area_name?: string;   // 景区/片区（高德 AOI/父级推导）
+  area_source?: string;
+  area_confidence?: number;
+  area_candidates?: Array<{ name: string; source?: string }>;
   poi: string;        // 当前 POI（空=仅城市级别）
   poi_type?: string;  // POI 类型字符串（新增，来自高德 place/around）
   lat?: number;       // 代表性坐标（用于候选 POI 查询）
@@ -82,6 +86,8 @@ interface PoiGroup {
   file_count: number;
   // 本地编辑状态
   draft?: string;     // 编辑草稿
+  areaDraft?: string; // 景区编辑草稿
+  areaSaving?: boolean;
   editing?: boolean;
   saving?: boolean;
   candidates?: PoiCandidate[] | null;  // 候选 POI 列表（按需加载）
@@ -370,7 +376,11 @@ export default function ScanPage() {
 
     // 展开：先设置 editing=true
     setPoiGroups((prev) =>
-      prev.map((g, i) => (i === idx ? { ...g, editing: true, draft: g.poi } : g))
+      prev.map((g, i) =>
+        i === idx
+          ? { ...g, editing: true, draft: g.poi, areaDraft: g.area_name ?? "" }
+          : g
+      )
     );
 
     // 候选 POI 只在首次展开时按需加载（已加载过则不重复请求）
@@ -392,6 +402,62 @@ export default function ScanPage() {
           prev.map((g, i) => i === idx ? { ...g, loadingCandidates: false, candidates: [] } : g)
         );
       }
+    }
+  };
+
+  // ── 景区审核：保存单组景区 ─────────────────────────────────
+
+  const handleSaveAreaGroup = async (idx: number) => {
+    const group = poiGroups[idx];
+    if (!group || (group.areaDraft ?? "") === (group.area_name ?? "")) {
+      setPoiGroups((prev) =>
+        prev.map((g, i) => (i === idx ? { ...g, areaSaving: false } : g))
+      );
+      return;
+    }
+
+    setPoiGroups((prev) =>
+      prev.map((g, i) => (i === idx ? { ...g, areaSaving: true } : g))
+    );
+
+    try {
+      const json = await apiPut<any>("/api/scan/area-group", {
+        province: group.province,
+        city: group.city,
+        old_area: group.area_name ?? "",
+        old_poi: group.poi ?? "",
+        new_area: group.areaDraft ?? "",
+      });
+      if (json.success) {
+        addLog(
+          `景区更新：${group.city} / ${group.poi || "（无 POI）"}：` +
+          `${group.area_name || "（无）"} → ${json.area_name || "（无）"}`
+        );
+        setPoiGroups((prev) =>
+          prev.map((g, i) =>
+            i === idx
+              ? {
+                  ...g,
+                  area_name: json.area_name || "",
+                  area_source: "manual",
+                  area_confidence: 1,
+                  areaDraft: json.area_name || "",
+                  areaSaving: false,
+                }
+              : g
+          )
+        );
+      } else {
+        addLog(`景区更新失败: ${json.error || "未知错误"}`);
+        setPoiGroups((prev) =>
+          prev.map((g, i) => (i === idx ? { ...g, areaSaving: false } : g))
+        );
+      }
+    } catch (e) {
+      addLog(`景区更新请求失败: ${e}`);
+      setPoiGroups((prev) =>
+        prev.map((g, i) => (i === idx ? { ...g, areaSaving: false } : g))
+      );
     }
   };
 
@@ -1037,9 +1103,17 @@ export default function ScanPage() {
                 </span>
 
                 {/* POI 展示（只读，编辑区已移到展开区） */}
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-0 flex items-center gap-2">
+                  {group.area_name && (
+                    <span
+                      title={`景区来源：${group.area_source || "unknown"}`}
+                      className="text-xs px-1.5 py-0.5 rounded border bg-amber-900/20 text-amber-300 border-amber-700/40 flex-shrink-0 max-w-[12rem] truncate"
+                    >
+                      🏞 {group.area_name}
+                    </span>
+                  )}
                   {group.poi ? (
-                    <span className="text-emerald-300">{group.poi}</span>
+                    <span className="text-emerald-300 truncate">{group.poi}</span>
                   ) : (
                     <span className="text-slate-500 italic">
                       （无 POI，仅显示城市）
@@ -1067,6 +1141,38 @@ export default function ScanPage() {
               {/* 展开区：候选POI编辑器 + 缩略图（合并显示，整行点击触发）*/}
               {group.editing && (
                 <div className="px-3 pb-3 pt-2 border-t border-slate-700/30 space-y-3">
+                  {/* 景区编辑器：只影响当前组文件，不写全局别名 */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-400 flex-shrink-0 w-10">景区</span>
+                    <input
+                      type="text"
+                      value={group.areaDraft ?? ""}
+                      onChange={(e) =>
+                        setPoiGroups((prev) =>
+                          prev.map((g, i) =>
+                            i === idx ? { ...g, areaDraft: e.target.value } : g
+                          )
+                        )
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleSaveAreaGroup(idx);
+                        if (e.key === "Escape") handleToggleExpand(idx);
+                      }}
+                      placeholder="如：三峡大坝旅游区（留空=清除）"
+                      className="flex-1 bg-slate-700 border border-amber-600/50 rounded px-2 py-1 text-sm text-white outline-none"
+                    />
+                    <button
+                      onClick={() => handleSaveAreaGroup(idx)}
+                      disabled={group.areaSaving}
+                      className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-white text-xs rounded transition-colors flex-shrink-0"
+                    >
+                      {group.areaSaving ? "..." : "保存景区"}
+                    </button>
+                    <span className="text-[10px] text-slate-500 flex-shrink-0">
+                      {group.area_source || "未识别"}
+                    </span>
+                  </div>
+
                   {/* 候选 POI 编辑器 */}
                   <div className="space-y-1.5">
                     {group.loadingCandidates && (

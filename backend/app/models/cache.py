@@ -1,5 +1,5 @@
 """逆地理编码缓存 + POI 聚类模型"""
-from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, UniqueConstraint, Text
 from app.core.database import Base
 
 
@@ -22,7 +22,11 @@ class GeocodeCache(Base):
     township = Column(String)
     poi = Column(String)
     poi_type = Column(String)
-    source = Column(String)                   # 'offline' | 'gaode'
+    area_name = Column(String)
+    area_source = Column(String)
+    area_confidence = Column(Float)
+    area_candidates_json = Column(Text)
+    source = Column(String)                   # 'offline' | 'gaode' | 'nominatim' | 'overpass'
     cached_at = Column(String)
 
     __table_args__ = (UniqueConstraint("lat_key", "lon_key"),)

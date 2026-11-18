@@ -112,6 +112,7 @@ cd backend
 - [真实样本验证（东北边境）](docs/2026-11-14-real-sample-validation.md)
 - [真实样本验证（越南游轮）](docs/2026-11-14-vietnam-sample-validation.md)
 - [高德 AOI / 父级 POI 实验（宜昌）](docs/2026-11-16-amap-aoi-spike.md)
+- [Phase 1：景区字段与候选](docs/2026-11-18-phase1-area.md)
 - [Overpass 境外景点后续事项](docs/2026-11-13-overpass-followup.md)
 - [项目总览（历史快照）](docs/project-overview.md)
 - [技术架构](docs/architecture.md)
@@ -129,7 +130,7 @@ cd backend
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | Phase 1 | 项目初始化 | ✅ 完成 |
-| Phase 2 | 后端核心模块（当前 153 项测试通过） | ✅ 完成 |
+| Phase 2 | 后端核心模块（当前 158 项测试通过） | ✅ 完成 |
 | Phase 3 | 前端界面 + 高德 POI 集成 | ✅ 完成 |
 | Phase 4 | 功能强化（POI 审核 / 行程命名 / 行程重建 / 我的旅迹） | ✅ 基本完成 |
 | Phase 5 | 多用户 SaaS | ⏸️ 搁置 |
