@@ -193,3 +193,47 @@ def test_area_group_update_only_touches_matching_group(tmp_path):
         await engine.dispose()
 
     asyncio.run(run())
+
+
+def test_photo_poi_update_only_selected_files(tmp_path):
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from app.api.scan import PhotoPoiUpdate, update_photo_poi
+    from app.core.database import Base
+    from app.models import archive_log, archive_plan, cache, file, trip, trip_record  # noqa: F401
+    from app.models.file import MediaFile
+
+    async def run():
+        db_path = (tmp_path / "photo_poi.sqlite").as_posix()
+        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as db:
+            db.add_all([
+                MediaFile(
+                    original_path="C:/in/a.jpg", current_path="C:/in/a.jpg",
+                    file_name="a.jpg", file_type="photo",
+                    province="湖北省", city="宜昌市", poi="坛子岭",
+                ),
+                MediaFile(
+                    original_path="C:/in/b.jpg", current_path="C:/in/b.jpg",
+                    file_name="b.jpg", file_type="photo",
+                    province="湖北省", city="宜昌市", poi="坛子岭",
+                ),
+            ])
+            await db.commit()
+
+            resp = await update_photo_poi(
+                PhotoPoiUpdate(paths=["C:/in/a.jpg"], new_poi="185观景平台"),
+                db,
+            )
+            assert resp["updated"] == 1
+
+            rows = (await db.execute(select(MediaFile).order_by(MediaFile.file_name))).scalars().all()
+            assert rows[0].poi == "185观景平台"
+            assert rows[0].geocode_source == "manual"
+            assert rows[1].poi == "坛子岭"
+        await engine.dispose()
+
+    asyncio.run(run())

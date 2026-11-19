@@ -57,6 +57,12 @@ class AreaGroupUpdate(BaseModel):
     new_area: str = ""
 
 
+class PhotoPoiUpdate(BaseModel):
+    """照片级 POI 修正（只影响选中的文件）"""
+    paths: list[str]
+    new_poi: str = ""
+
+
 class ScanStatusResponse(BaseModel):
     total_files: int
     with_gps: int
@@ -383,6 +389,59 @@ class PoiGroupUpdateRequest(BaseModel):
     new_poi: str        # 更新后的 POI 名称（空字符串=清空）
 
 
+@router.get("/scan/poi-files")
+async def get_poi_files(
+    province: str = Query(""),
+    city: str = Query(""),
+    area_name: str = Query(""),
+    poi: str = Query(""),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(60, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    """分页读取某个 POI 组的全部文件（缩略图“加载更多”）。"""
+    conditions = [
+        MediaFile.province == province,
+        MediaFile.city == city,
+    ]
+    if area_name:
+        conditions.append(MediaFile.area_name == area_name)
+    else:
+        conditions.append(or_(MediaFile.area_name == "", MediaFile.area_name.is_(None)))
+    if poi:
+        conditions.append(MediaFile.poi == poi)
+    else:
+        conditions.append(or_(MediaFile.poi == "", MediaFile.poi.is_(None)))
+
+    total = (
+        await db.execute(select(func.count(MediaFile.id)).where(*conditions))
+    ).scalar_one()
+    rows = (
+        await db.execute(
+            select(MediaFile)
+            .where(*conditions)
+            .order_by(MediaFile.datetime_original, MediaFile.id)
+            .offset(offset)
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    return {
+        "success": True,
+        "files": [
+            {
+                "path": f.original_path,
+                "name": f.file_name,
+                "datetime": f.datetime_original,
+            }
+            for f in rows
+        ],
+        "total": total,
+        "offset": offset,
+        "has_more": offset + len(rows) < total,
+    }
+
+
 @router.put("/scan/area-group")
 async def update_area_group(
     body: AreaGroupUpdate,
@@ -423,6 +482,34 @@ async def update_area_group(
     )
     await db.commit()
     return {"success": True, "updated": result.rowcount, "area_name": new_area}
+
+
+@router.put("/scan/photo-poi")
+async def update_photo_poi(
+    body: PhotoPoiUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """按文件路径修改选中照片的 POI（只影响所选文件）。"""
+    paths = [p for p in body.paths if p]
+    if not paths:
+        raise HTTPException(status_code=400, detail="未选择照片")
+    if len(paths) > 500:
+        raise HTTPException(status_code=400, detail="一次最多修改 500 张")
+    new_poi = body.new_poi.strip()
+    if len(new_poi) > 120:
+        raise HTTPException(status_code=400, detail="POI 名称过长（>120 字符）")
+
+    result = await db.execute(
+        update(MediaFile)
+        .where(MediaFile.original_path.in_(paths))
+        .values(
+            poi=new_poi or None,
+            poi_type="",
+            geocode_source="manual",
+        )
+    )
+    await db.commit()
+    return {"success": True, "updated": result.rowcount, "new_poi": new_poi}
 
 
 @router.put("/scan/poi-group")

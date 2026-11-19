@@ -89,6 +89,10 @@ interface PoiGroup {
   areaDraft?: string; // 景区编辑草稿
   areaSaving?: boolean;
   selected?: boolean;
+  selectedFiles?: string[]; // 当前组内勾选的照片路径
+  photoPoiDraft?: string;   // 照片级 POI 编辑草稿
+  photoSaving?: boolean;
+  loadingFiles?: boolean;
   editing?: boolean;
   saving?: boolean;
   candidates?: PoiCandidate[] | null;  // 候选 POI 列表（按需加载）
@@ -341,6 +345,54 @@ export default function ScanPage() {
     }
   };
 
+  // ── POI 审核：按组加载更多照片 ─────────────────────────────
+
+  const handleLoadMoreFiles = async (idx: number) => {
+    const group = poiGroups[idx];
+    if (!group || group.loadingFiles) return;
+    const current = group.files?.length ?? 0;
+    if (current >= group.file_count) return;
+
+    setPoiGroups((prev) =>
+      prev.map((g, i) => (i === idx ? { ...g, loadingFiles: true } : g))
+    );
+    try {
+      const params = new URLSearchParams({
+        province: group.province,
+        city: group.city,
+        area_name: group.area_name ?? "",
+        poi: group.poi ?? "",
+        offset: String(current),
+        limit: "60",
+      });
+      const json = await apiGet<any>(`/api/scan/poi-files?${params}`);
+      if (json.success) {
+        setPoiGroups((prev) =>
+          prev.map((g, i) =>
+            i === idx
+              ? {
+                  ...g,
+                  files: [...(g.files ?? []), ...(json.files ?? [])],
+                  file_count: json.total ?? g.file_count,
+                  loadingFiles: false,
+                }
+              : g
+          )
+        );
+      } else {
+        addLog("加载更多照片失败");
+        setPoiGroups((prev) =>
+          prev.map((g, i) => (i === idx ? { ...g, loadingFiles: false } : g))
+        );
+      }
+    } catch (e) {
+      addLog(`加载更多照片失败：${e}`);
+      setPoiGroups((prev) =>
+        prev.map((g, i) => (i === idx ? { ...g, loadingFiles: false } : g))
+      );
+    }
+  };
+
   // ── POI 审核：加载分组 ─────────────────────────────────────
 
   const handleLoadPoiGroups = async () => {
@@ -353,11 +405,18 @@ export default function ScanPage() {
         setPoiGroups(json.data.groups.map((g: PoiGroup) => ({
           ...g,
           draft: g.poi,
+          areaDraft: g.area_name ?? "",
           editing: false,
           saving: false,
+          areaSaving: false,
+          selected: false,
         })));
+        addLog(`POI 分组已刷新：${json.data.groups.length} 组`);
+      } else {
+        addLog("刷新 POI 分组失败：接口返回失败");
       }
     } catch (e) {
+      addLog(`刷新 POI 分组失败：${e}`);
       console.error("加载 POI 分组失败:", e);
     } finally {
       setPoiGroupsLoading(false);
@@ -512,11 +571,49 @@ export default function ScanPage() {
       }
     }
     setBulkAreaSaving(false);
+    setBulkAreaDraft("");
     addLog(
       `批量设置景区：更新 ${updated} 组` +
       (failed ? `，失败 ${failed} 组` : "") +
       ` → ${bulkAreaDraft.trim() || "（清除）"}`
     );
+  };
+
+  // ── 照片级 POI：只修改勾选照片 ─────────────────────────────
+
+  const handleSavePhotoPoi = async (idx: number) => {
+    const group = poiGroups[idx];
+    const paths = group?.selectedFiles ?? [];
+    if (!group || paths.length === 0) {
+      addLog("请先勾选要修改 POI 的照片");
+      return;
+    }
+
+    setPoiGroups((prev) =>
+      prev.map((g, i) => (i === idx ? { ...g, photoSaving: true } : g))
+    );
+    try {
+      const json = await apiPut<any>("/api/scan/photo-poi", {
+        paths,
+        new_poi: group.photoPoiDraft ?? "",
+      });
+      if (json.success) {
+        addLog(
+          `照片级 POI 更新：${json.updated} 张 → ${json.new_poi || "（清空）"}`
+        );
+        await handleLoadPoiGroups();
+      } else {
+        addLog(`照片级 POI 更新失败：${json.error || "未知错误"}`);
+        setPoiGroups((prev) =>
+          prev.map((g, i) => (i === idx ? { ...g, photoSaving: false } : g))
+        );
+      }
+    } catch (e) {
+      addLog(`照片级 POI 更新请求失败：${e}`);
+      setPoiGroups((prev) =>
+        prev.map((g, i) => (i === idx ? { ...g, photoSaving: false } : g))
+      );
+    }
   };
 
   // ── POI 审核：保存单组修改 ─────────────────────────────────
@@ -1408,18 +1505,84 @@ export default function ScanPage() {
                     </div>
                   </div>
 
+                  {/* 照片级 POI：勾选后可单独修改，不影响同组其他照片 */}
+                  {(group.selectedFiles?.length ?? 0) > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap bg-slate-900/50 border border-slate-700/40 rounded-lg px-2 py-1.5">
+                      <span className="text-xs text-emerald-300">
+                        已选 {group.selectedFiles?.length} 张
+                      </span>
+                      <input
+                        type="text"
+                        value={group.photoPoiDraft ?? ""}
+                        onChange={(e) =>
+                          setPoiGroups((prev) =>
+                            prev.map((g, i) =>
+                              i === idx ? { ...g, photoPoiDraft: e.target.value } : g
+                            )
+                          )
+                        }
+                        placeholder="这些照片的新 POI（留空=清除）"
+                        className="flex-1 min-w-[10rem] bg-slate-700 border border-emerald-600/40 rounded px-2 py-1 text-xs text-white outline-none"
+                      />
+                      <button
+                        onClick={() => handleSavePhotoPoi(idx)}
+                        disabled={group.photoSaving}
+                        className="text-xs px-2 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded"
+                      >
+                        {group.photoSaving ? "保存中..." : "修改所选照片"}
+                      </button>
+                      <button
+                        onClick={() =>
+                          setPoiGroups((prev) =>
+                            prev.map((g, i) =>
+                              i === idx ? { ...g, selectedFiles: [] } : g
+                            )
+                          )
+                        }
+                        className="text-xs px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded"
+                      >
+                        取消选择
+                      </button>
+                    </div>
+                  )}
+
                   {/* 缩略图网格（6列，展开时始终显示，无需再点一次） */}
                   {group.files && group.files.length > 0 && (
                     <div className="grid grid-cols-6 gap-1.5">
                       {group.files.map((f, fi) => (
                         <div key={fi} className="space-y-0.5">
                           <div
-                            className="aspect-square bg-slate-900 rounded overflow-hidden border border-slate-700/40 cursor-zoom-in group/thumb"
+                            className="relative aspect-square bg-slate-900 rounded overflow-hidden border border-slate-700/40 cursor-zoom-in group/thumb"
                             title="点击查看大图"
                             onClick={() => setLightboxSrc(
                               backendUrl(`/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=1200&quality=90`)
                             )}
                           >
+                            <label
+                              className="absolute top-1 left-1 z-10 bg-slate-950/80 rounded p-0.5 cursor-pointer"
+                              onClick={(e) => e.stopPropagation()}
+                              title="勾选后可单独修改 POI"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={(group.selectedFiles ?? []).includes(f.path)}
+                                onChange={() =>
+                                  setPoiGroups((prev) =>
+                                    prev.map((g, i) => {
+                                      if (i !== idx) return g;
+                                      const current = g.selectedFiles ?? [];
+                                      return {
+                                        ...g,
+                                        selectedFiles: current.includes(f.path)
+                                          ? current.filter((p) => p !== f.path)
+                                          : [...current, f.path],
+                                      };
+                                    })
+                                  )
+                                }
+                                className="w-3.5 h-3.5 accent-emerald-500"
+                              />
+                            </label>
                             <img
                               src={backendUrl(`/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=120&quality=75`)}
                               alt={f.name}
@@ -1438,6 +1601,18 @@ export default function ScanPage() {
                         </div>
                       ))}
                     </div>
+                  )}
+
+                  {group.files && group.files.length < group.file_count && (
+                    <button
+                      onClick={() => handleLoadMoreFiles(idx)}
+                      disabled={group.loadingFiles}
+                      className="w-full text-xs text-slate-500 hover:text-slate-300 py-1.5 border border-slate-700/50 hover:border-slate-600 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {group.loadingFiles
+                        ? "加载中..."
+                        : `加载更多（还有 ${group.file_count - group.files.length} 张）`}
+                    </button>
                   )}
                 </div>
               )}
