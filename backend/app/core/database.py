@@ -131,6 +131,7 @@ async def init_db() -> None:
 
     # 导入所有模型，确保它们被注册到 Base.metadata
     from app.models import (  # noqa: F401
+        area_alias,
         archive_log,
         archive_plan,
         cache,

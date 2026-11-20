@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.models.file import MediaFile
 from app.services.metadata_service import scan_folder, extract_metadata
+from app.services.area_alias_service import load_aliases, resolve_area_alias, upsert_alias
 from app.utils.path_utils import validate_folder_name
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,14 @@ class PhotoPoiUpdate(BaseModel):
     """照片级 POI 修正（只影响选中的文件）"""
     paths: list[str]
     new_poi: str = ""
+
+
+class AreaMergeRequest(BaseModel):
+    """把同城市的变体景区名归一到规范名，并可选更新现有文件。"""
+    city: str
+    source_names: list[str]
+    canonical_name: str
+    apply_existing: bool = True
 
 
 class ScanStatusResponse(BaseModel):
@@ -387,6 +396,77 @@ class PoiGroupUpdateRequest(BaseModel):
     city: str
     old_poi: str        # 空字符串表示"无POI"
     new_poi: str        # 更新后的 POI 名称（空字符串=清空）
+
+
+@router.get("/scan/area-aliases")
+async def get_area_aliases(db: AsyncSession = Depends(get_db)):
+    """列出景区别名（用于前端提示）。"""
+    from app.models.area_alias import AreaAlias
+
+    rows = (await db.execute(select(AreaAlias).order_by(AreaAlias.city, AreaAlias.alias_name))).scalars().all()
+    return {
+        "success": True,
+        "aliases": [
+            {
+                "id": row.id,
+                "city": row.city,
+                "alias_name": row.alias_name,
+                "canonical_name": row.canonical_name,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.put("/scan/area-merge")
+async def merge_area_names(
+    body: AreaMergeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """把同城市的多个景区变体归一到规范名，并写别名。"""
+    city = body.city.strip()
+    if not city:
+        raise HTTPException(status_code=400, detail="城市不能为空")
+    try:
+        canonical = validate_folder_name(body.canonical_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"规范景区名 {exc}")
+
+    aliases = await load_aliases(db)
+    canonical = resolve_area_alias(aliases, city, canonical)
+    source_names = []
+    for name in body.source_names:
+        value = (name or "").strip()
+        if value and value != canonical and value not in source_names:
+            source_names.append(value)
+    if not source_names:
+        raise HTTPException(status_code=400, detail="至少提供一个需要归一的变体名")
+
+    updated = 0
+    if body.apply_existing:
+        result = await db.execute(
+            update(MediaFile)
+            .where(
+                MediaFile.city == city,
+                MediaFile.area_name.in_(source_names),
+            )
+            .values(
+                area_name=canonical,
+                area_source="manual",
+                area_confidence=1.0,
+            )
+        )
+        updated = result.rowcount
+
+    for name in source_names:
+        await upsert_alias(db, city, name, canonical)
+    await db.commit()
+    return {
+        "success": True,
+        "canonical_name": canonical,
+        "source_names": source_names,
+        "updated": updated,
+    }
 
 
 @router.get("/scan/poi-files")
@@ -724,6 +804,7 @@ async def geocode_scanned_files(
     errors = 0
     api_calls = 0
     cache_map = await load_cache(db)
+    area_aliases = await load_aliases(db)
     estimated_calls = 0
 
     # POI 聚类（force_repoi 模式下禁用，避免跨文件复用错误POI）
@@ -855,6 +936,9 @@ async def geocode_scanned_files(
                     api_calls += 1
 
                 if loc:
+                    loc.area_name = resolve_area_alias(
+                        area_aliases, loc.city, loc.area_name
+                    )
                     if loc.source == "gaode":
                         f.city = loc.city
                         f.province = loc.province

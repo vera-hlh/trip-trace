@@ -221,6 +221,13 @@ export default function ScanPage() {
   const [splitName, setSplitName] = useState("");
   const [splitSaving, setSplitSaving] = useState(false);
 
+  // 景区名归一化/别名
+  const [normalizeOpen, setNormalizeOpen] = useState(false);
+  const [normalizeCity, setNormalizeCity] = useState("");
+  const [normalizeSources, setNormalizeSources] = useState<string[]>([]);
+  const [normalizeCanonical, setNormalizeCanonical] = useState("");
+  const [normalizeSaving, setNormalizeSaving] = useState(false);
+
   // POI 分组自动恢复：从行程重建页返回时，step="done" 但 poiGroups 已被重置，
   // 通过 useEffect 在组件挂载时自动重新加载，确保用户能继续审核 POI
   useEffect(() => {
@@ -719,6 +726,40 @@ export default function ScanPage() {
       setPoiGroups((prev) =>
         prev.map((g, i) => (i === idx ? { ...g, saving: false } : g))
       );
+    }
+  };
+
+  // ── 景区名归一化 ───────────────────────────────────────────
+
+  const handleApplyAreaAlias = async () => {
+    if (!normalizeCity || normalizeSources.length === 0 || !normalizeCanonical.trim()) {
+      addLog("请选择城市、至少一个变体名，并填写规范名");
+      return;
+    }
+    setNormalizeSaving(true);
+    try {
+      const res = await apiPut<any>("/api/scan/area-merge", {
+        city: normalizeCity,
+        source_names: normalizeSources,
+        canonical_name: normalizeCanonical.trim(),
+        apply_existing: true,
+      });
+      if (res.success) {
+        addLog(
+          `景区归一化：${res.source_names.length} 个变体 → ${res.canonical_name}，` +
+          `更新 ${res.updated} 个文件`
+        );
+        setNormalizeOpen(false);
+        setNormalizeSources([]);
+        setNormalizeCanonical("");
+        await handleLoadPoiGroups();
+      } else {
+        addLog(`景区归一化失败：${res.error || "未知错误"}`);
+      }
+    } catch (e) {
+      addLog(`景区归一化请求失败：${e}`);
+    } finally {
+      setNormalizeSaving(false);
     }
   };
 
@@ -1319,13 +1360,27 @@ export default function ScanPage() {
                 POI将作为照片的备注记录下来。你可以点击以下记录按需修改POI。
               </p>
             </div>
-            <button
-              onClick={handleLoadPoiGroups}
-              disabled={poiGroupsLoading}
-              className="text-xs text-slate-500 hover:text-slate-300 border border-slate-700 px-2 py-1 rounded transition-colors"
-            >
-              {poiGroupsLoading ? "加载中..." : "🔄 刷新"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  const firstCity = poiGroups.find(g => g.city)?.city || "";
+                  setNormalizeCity(firstCity);
+                  setNormalizeSources([]);
+                  setNormalizeCanonical("");
+                  setNormalizeOpen(true);
+                }}
+                className="text-xs text-amber-300 hover:text-amber-200 border border-amber-700/50 px-2 py-1 rounded transition-colors"
+              >
+                🔗 景区归一化
+              </button>
+              <button
+                onClick={handleLoadPoiGroups}
+                disabled={poiGroupsLoading}
+                className="text-xs text-slate-500 hover:text-slate-300 border border-slate-700 px-2 py-1 rounded transition-colors"
+              >
+                {poiGroupsLoading ? "加载中..." : "🔄 刷新"}
+              </button>
+            </div>
           </div>
 
           {/* 批量景区操作 */}
@@ -1833,6 +1888,119 @@ export default function ScanPage() {
           </div>
         </div>
       )}
+
+      {/* ── 景区名归一化弹窗 ───────────────────────────────── */}
+      {normalizeOpen && (() => {
+        const cities = Array.from(
+          new Set(poiGroups.map((g) => g.city).filter(Boolean))
+        );
+        const cityGroups = poiGroups.filter((g) => g.city === normalizeCity);
+        const counts = new Map<string, number>();
+        for (const g of cityGroups) {
+          if (!g.area_name) continue;
+          counts.set(g.area_name, (counts.get(g.area_name) || 0) + g.file_count);
+        }
+        const areas = Array.from(counts.entries());
+        const allAreaNames = Array.from(
+          new Set(poiGroups.map((g) => g.area_name).filter(Boolean))
+        );
+        return (
+          <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6"
+               onClick={() => setNormalizeOpen(false)}>
+            <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-xl max-h-[85vh] flex flex-col"
+                 onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700/60">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-200">🔗 景区名归一化</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    同一城市的变体名合并为规范名；别名会用于以后地理编码。
+                  </p>
+                </div>
+                <button onClick={() => setNormalizeOpen(false)} className="text-slate-400 hover:text-white text-xl">✕</button>
+              </div>
+
+              <div className="px-5 py-3 space-y-3 overflow-y-auto">
+                <label className="block text-xs text-slate-400">
+                  城市
+                  <select
+                    value={normalizeCity}
+                    onChange={(e) => {
+                      setNormalizeCity(e.target.value);
+                      setNormalizeSources([]);
+                      setNormalizeCanonical("");
+                    }}
+                    className="mt-1 w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm text-white"
+                  >
+                    {cities.map((city) => <option key={city} value={city}>{city}</option>)}
+                  </select>
+                </label>
+
+                <div>
+                  <div className="text-xs text-slate-400 mb-1">
+                    选择要归一的变体名（当前城市的已扫描数据）
+                  </div>
+                  <div className="max-h-52 overflow-y-auto border border-slate-700/50 rounded divide-y divide-slate-800">
+                    {areas.map(([name, count]) => (
+                      <label key={name} className="flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-slate-800/60 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={normalizeSources.includes(name)}
+                          onChange={() =>
+                            setNormalizeSources((prev) =>
+                              prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name]
+                            )
+                          }
+                          className="w-4 h-4 accent-amber-500"
+                        />
+                        <span className="text-slate-200 flex-1 truncate">{name}</span>
+                        <span className="text-slate-500">{count} 张</span>
+                      </label>
+                    ))}
+                    {areas.length === 0 && (
+                      <div className="text-xs text-slate-500 p-3">该城市没有景区名</div>
+                    )}
+                  </div>
+                </div>
+
+                <label className="block text-xs text-slate-400">
+                  规范景区名
+                  <input
+                    type="text"
+                    value={normalizeCanonical}
+                    onChange={(e) => setNormalizeCanonical(e.target.value)}
+                    list="area-canonical-options"
+                    placeholder="例如：三峡大坝旅游区"
+                    className="mt-1 w-full bg-slate-700 border border-amber-600/40 rounded px-2 py-1.5 text-sm text-white outline-none"
+                  />
+                  <datalist id="area-canonical-options">
+                    {allAreaNames.map((name) => <option key={name} value={name} />)}
+                  </datalist>
+                </label>
+
+                <p className="text-[11px] text-amber-300/80">
+                  会同时更新当前城市已扫描文件；以后地理编码遇到这些变体名会自动使用规范名。
+                </p>
+              </div>
+
+              <div className="px-5 py-3 border-t border-slate-700/60 flex justify-end gap-2">
+                <button
+                  onClick={() => setNormalizeOpen(false)}
+                  className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleApplyAreaAlias}
+                  disabled={normalizeSaving || normalizeSources.length === 0 || !normalizeCanonical.trim()}
+                  className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs rounded"
+                >
+                  {normalizeSaving ? "应用中..." : "归一化并更新"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── 子行程拆分弹窗 ─────────────────────────────────── */}
       {splitTarget && (() => {
