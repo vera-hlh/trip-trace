@@ -111,6 +111,55 @@ type FlowStep =
   | "previewing"
   | "done";
 
+// ── 方案数据 → 前端行程树 ───────────────────────────────────
+
+function buildTripData(tripsStructure: any[], files: any[]): BigTripData[] {
+  const fileMap = new Map<number, Array<{
+    name: string;
+    path: string;
+    planFileId?: number;
+    datetime?: string | null;
+    areaName?: string;
+    poi?: string;
+  }>>();
+  for (const f of files) {
+    if (f.trip_id == null) continue;
+    const name =
+      f.file_name ||
+      f.target_rel_path.replace(/\\/g, "/").split("/").pop() ||
+      "";
+    if (!fileMap.has(f.trip_id)) fileMap.set(f.trip_id, []);
+    fileMap.get(f.trip_id)!.push({
+      name,
+      path: f.original_path || "",
+      planFileId: f.id,
+      datetime: f.datetime_original ?? null,
+      areaName: f.area_name ?? "",
+      poi: f.poi ?? "",
+    });
+  }
+
+  return tripsStructure.map((big: any) => ({
+    planTripId: big.id,
+    folder: big.folder,
+    displayName: big.display_name || big.folder,
+    start_date: big.start_date,
+    end_date: big.end_date,
+    total_files: big.total_files ?? 0,
+    sub_trips: (big.sub_trips || []).map((sub: any) => ({
+      planTripId: sub.id,
+      folder: sub.folder,
+      displayName: sub.display_name || sub.folder,
+      location: sub.location || "",
+      areaName: sub.area_name || "",
+      start_date: sub.start_date,
+      end_date: sub.end_date,
+      file_count: sub.file_count ?? 0,
+      files: fileMap.get(sub.id) || [],
+    })),
+  }));
+}
+
 // ── 主页面 ───────────────────────────────────────────────────
 
 export default function ScanPage() {
@@ -124,6 +173,8 @@ export default function ScanPage() {
     setTripStructure,
     tripType,
     setTripType,
+    currentPlanId,
+    planVersion,
     setCurrentPlanId,
     setPlanVersion,
     setPlanExecuted,
@@ -163,6 +214,12 @@ export default function ScanPage() {
 
   // 大图预览（Lightbox）
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+
+  // 子行程拆分
+  const [splitTarget, setSplitTarget] = useState<{ bi: number; si: number } | null>(null);
+  const [splitSelected, setSplitSelected] = useState<number[]>([]);
+  const [splitName, setSplitName] = useState("");
+  const [splitSaving, setSplitSaving] = useState(false);
 
   // POI 分组自动恢复：从行程重建页返回时，step="done" 但 poiGroups 已被重置，
   // 通过 useEffect 在组件挂载时自动重新加载，确保用户能继续审核 POI
@@ -665,6 +722,75 @@ export default function ScanPage() {
     }
   };
 
+  // ── 子行程拆分 ─────────────────────────────────────────────
+
+  const handleOpenSplit = (bi: number, si: number) => {
+    const sub = tripStructure?.[bi]?.sub_trips?.[si];
+    if (!sub?.planTripId) {
+      addLog("该子行程没有方案 ID，无法拆分");
+      return;
+    }
+    setSplitTarget({ bi, si });
+    setSplitSelected([]);
+    setSplitName(`${sub.displayName} 2`);
+  };
+
+  const handleSplitSub = async () => {
+    if (!splitTarget || !currentPlanId) return;
+    const sub = tripStructure?.[splitTarget.bi]?.sub_trips?.[splitTarget.si];
+    if (!sub?.planTripId) return;
+
+    const allIds = (sub.files ?? [])
+      .map((f) => f.planFileId)
+      .filter((id): id is number => typeof id === "number");
+    const selected = splitSelected.filter((id) => allIds.includes(id));
+    if (selected.length === 0 || selected.length >= allIds.length) {
+      addLog("请选择至少 1 张、且不要选完全部照片");
+      return;
+    }
+    const selectedSet = new Set(selected);
+    const remaining = allIds.filter((id) => !selectedSet.has(id));
+    const newName = splitName.trim() || `${sub.displayName} 2`;
+
+    setSplitSaving(true);
+    try {
+      const res = await patchArchivePlan(currentPlanId, {
+        plan_version: planVersion,
+        splits: [{
+          trip_id: sub.planTripId,
+          groups: [
+            { name: newName, file_ids: selected },
+            { name: sub.displayName, file_ids: remaining },
+          ],
+        }],
+      });
+      if (!res.success) {
+        throw new Error(res.error || res.detail || "拆分失败");
+      }
+      setPlanVersion(res.data.plan_version);
+
+      const detail = await getArchivePlan(currentPlanId);
+      if (!detail.success || !detail.data) {
+        throw new Error("拆分后读取方案失败");
+      }
+      const parsed = buildTripData(detail.data.trips_structure, detail.data.files);
+      setTripStructure(parsed);
+      const subCount = parsed.reduce((n, big) => n + big.sub_trips.length, 0);
+      setPreviewSummary({
+        total_files: detail.data.files.length,
+        big_trips_created: parsed.length,
+        sub_trips_created: subCount,
+        files_without_gps: scanStats?.withoutGps ?? 0,
+      });
+      setSplitTarget(null);
+      addLog(`已拆分「${sub.displayName}」→「${newName}」（${selected.length} 张）`);
+    } catch (e) {
+      addLog(`拆分失败: ${e}`);
+    } finally {
+      setSplitSaving(false);
+    }
+  };
+
   // ── 归档预览 ───────────────────────────────────────────────
 
   const handlePreview = async () => {
@@ -696,37 +822,7 @@ export default function ScanPage() {
       setPlanVersion(plan.plan_version);
       setPlanExecuted(false);
 
-      // 按子行程 id 归组文件，供缩略图预览
-      const fileMap = new Map<number, Array<{ name: string; path: string }>>();
-      for (const f of files) {
-        if (f.trip_id == null) continue;
-        const name =
-          f.file_name ||
-          f.target_rel_path.replace(/\\/g, "/").split("/").pop() ||
-          "";
-        if (!fileMap.has(f.trip_id)) fileMap.set(f.trip_id, []);
-        fileMap.get(f.trip_id)!.push({ name, path: f.original_path || "" });
-      }
-
-      const parsed: BigTripData[] = trips_structure.map((big) => ({
-        planTripId: big.id,
-        folder: big.folder,
-        displayName: big.display_name || big.folder,
-        start_date: big.start_date,
-        end_date: big.end_date,
-        total_files: big.total_files ?? 0,
-        sub_trips: (big.sub_trips || []).map((sub) => ({
-          planTripId: sub.id,
-          folder: sub.folder,
-          displayName: sub.display_name || sub.folder,
-          location: sub.location || "",
-          areaName: sub.area_name || "",
-          start_date: sub.start_date,
-          end_date: sub.end_date,
-          file_count: sub.file_count ?? 0,
-          files: fileMap.get(sub.id) || [],
-        })),
-      }));
+      const parsed = buildTripData(trips_structure, files);
 
       setTripStructure(parsed);
       const subCount = parsed.reduce((n, big) => n + big.sub_trips.length, 0);
@@ -1701,6 +1797,7 @@ export default function ScanPage() {
             trips={tripStructure}
             onRenameBig={handleRenameBig}
             onRenameSub={handleRenameSub}
+            onSplitSub={handleOpenSplit}
           />
 
           {/* 下一步按钮：在行程树下方，用户看完行程树后自然点击 */}
@@ -1736,6 +1833,129 @@ export default function ScanPage() {
           </div>
         </div>
       )}
+
+      {/* ── 子行程拆分弹窗 ─────────────────────────────────── */}
+      {splitTarget && (() => {
+        const sub = tripStructure?.[splitTarget.bi]?.sub_trips?.[splitTarget.si];
+        if (!sub) return null;
+        const files = sub.files ?? [];
+        const selectable = files.filter((f) => typeof f.planFileId === "number");
+        const allIds = selectable.map((f) => f.planFileId!);
+        const selectedCount = splitSelected.length;
+        const canSplit = selectedCount > 0 && selectedCount < allIds.length;
+        return (
+          <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6"
+               onClick={() => setSplitTarget(null)}>
+            <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-3xl max-h-[85vh] flex flex-col"
+                 onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700/60">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-200">
+                    ✂️ 拆分「{sub.displayName}」
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    勾选要拆出的照片；剩余照片留在原名称下。
+                  </p>
+                </div>
+                <button onClick={() => setSplitTarget(null)} className="text-slate-400 hover:text-white text-xl">✕</button>
+              </div>
+
+              <div className="flex items-center gap-2 px-5 py-2 border-b border-slate-700/40 text-xs">
+                <span className="text-slate-400">已选 {selectedCount} / {allIds.length}</span>
+                <button
+                  onClick={() => setSplitSelected(allIds)}
+                  className="px-2 py-0.5 border border-slate-600 rounded text-slate-300 hover:bg-slate-700"
+                >
+                  全选
+                </button>
+                <button
+                  onClick={() => setSplitSelected([])}
+                  className="px-2 py-0.5 border border-slate-600 rounded text-slate-300 hover:bg-slate-700"
+                >
+                  清空
+                </button>
+                <span className="text-slate-500 ml-auto">按景区/时间核对后再拆</span>
+              </div>
+
+              <div className="overflow-y-auto px-5 py-2 space-y-1">
+                {selectable.map((f) => {
+                  const id = f.planFileId!;
+                  const checked = splitSelected.includes(id);
+                  return (
+                    <label
+                      key={id}
+                      className={clsx(
+                        "flex items-center gap-3 px-2 py-1.5 rounded cursor-pointer border",
+                        checked ? "bg-amber-900/20 border-amber-700/40" : "border-transparent hover:bg-slate-800/60"
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          setSplitSelected((prev) =>
+                            prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+                          )
+                        }
+                        className="w-4 h-4 accent-amber-500 flex-shrink-0"
+                      />
+                      <div className="w-10 h-10 bg-slate-800 rounded overflow-hidden flex-shrink-0">
+                        <img
+                          src={backendUrl(`/api/media/thumbnail?path=${encodeURIComponent(f.path)}&width=80&quality=60`)}
+                          alt={f.name}
+                          loading="lazy"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs text-slate-200 truncate">{f.name}</div>
+                        <div className="text-[10px] text-slate-500 truncate">
+                          {f.datetime ? f.datetime.slice(0, 16).replace("T", " ") : "无时间"}
+                          {f.areaName ? ` · ${f.areaName}` : ""}
+                          {f.poi ? ` · ${f.poi}` : ""}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+                {selectable.length === 0 && (
+                  <div className="text-xs text-slate-500 py-6 text-center">
+                    该子行程没有可拆分的照片
+                  </div>
+                )}
+              </div>
+
+              <div className="px-5 py-3 border-t border-slate-700/60 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 flex-shrink-0">新子行程名称</span>
+                  <input
+                    type="text"
+                    value={splitName}
+                    onChange={(e) => setSplitName(e.target.value)}
+                    placeholder="例如：三峡大坝"
+                    className="flex-1 bg-slate-700 border border-amber-600/40 rounded px-2 py-1 text-sm text-white outline-none"
+                  />
+                </div>
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    onClick={() => setSplitTarget(null)}
+                    className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleSplitSub}
+                    disabled={!canSplit || splitSaving}
+                    className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs rounded"
+                  >
+                    {splitSaving ? "拆分中..." : `拆出 ${selectedCount} 张`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── 大图预览 Lightbox ─────────────────────────────── */}
       {lightboxSrc && (

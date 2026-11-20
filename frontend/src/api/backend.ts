@@ -105,6 +105,9 @@ export interface PlanFileInfo {
   error?: string | null;
   file_name: string | null;
   original_path: string | null;
+  datetime_original?: string | null;
+  area_name?: string;
+  poi?: string;
 }
 
 export interface PlanData {

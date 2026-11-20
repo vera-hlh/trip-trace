@@ -27,6 +27,10 @@ export interface AppSettings {
 export interface SubTripFileItem {
   name: string;   // 文件名（如 IMG_20250201_143440.jpg）
   path: string;   // 完整原始路径（用于缩略图请求）
+  planFileId?: number;
+  datetime?: string | null;
+  areaName?: string;
+  poi?: string;
 }
 
 export interface SubTripData {

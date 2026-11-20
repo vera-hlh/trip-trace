@@ -9,10 +9,12 @@ export function TripTree({
   trips,
   onRenameBig,
   onRenameSub,
+  onSplitSub,
 }: {
   trips: BigTripData[];
   onRenameBig: (bi: number, name: string) => void;
   onRenameSub: (bi: number, si: number, name: string) => void;
+  onSplitSub: (bi: number, si: number) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [previewOpen, setPreviewOpen] = useState<Set<string>>(new Set());
@@ -138,6 +140,17 @@ export function TripTree({
                               )}
                             >
                               {isPreviewOpen ? "🙈 收起" : "🖼️ 预览"}
+                            </button>
+
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSplitSub(bi, si);
+                              }}
+                              title="选择照片拆分当前子行程"
+                              className="px-2 py-0.5 border rounded text-xs bg-amber-900/30 border-amber-700/50 text-amber-300 hover:bg-amber-800/40 transition-colors"
+                            >
+                              ✂️ 拆分
                             </button>
                           </div>
                         </div>

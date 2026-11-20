@@ -11,8 +11,10 @@ from app.api.plans import ArchiveOptions
 from app.api.plans import (
     ContainerGroup,
     PlanPatchRequest,
+    SplitGroup,
     TripMerge,
     TripRename,
+    TripSplit,
     build_plan_from_files,
     get_plan,
     patch_plan,
@@ -177,6 +179,52 @@ def test_patch_rename_merge_container(tmp_path):
                     db,
                 )
             assert exc.value.status_code == 409
+        finally:
+            await db.close()
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_split_sub_trip_into_two(tmp_path):
+    async def run():
+        engine, db = await make_context(tmp_path)
+        try:
+            db_files = [
+                make_file(1, "a1.jpg", "2025-09-10T09:00:00", "宜昌"),
+                make_file(2, "a2.jpg", "2025-09-10T09:05:00", "宜昌"),
+                make_file(3, "b1.jpg", "2025-09-10T09:10:00", "宜昌"),
+                make_file(4, "b2.jpg", "2025-09-10T09:15:00", "宜昌"),
+            ]
+            plan, _, _ = await build_plan_from_files(
+                db, db_files, "C:/in", "C:/out", ArchiveOptions()
+            )
+            data = (await get_plan(plan.id, db))["data"]
+            sub = data["trips_structure"][0]["sub_trips"][0]
+            file_ids = [f["id"] for f in data["files"]]
+
+            resp = await patch_plan(
+                plan.id,
+                PlanPatchRequest(
+                    plan_version=1,
+                    splits=[TripSplit(
+                        trip_id=sub["id"],
+                        groups=[
+                            SplitGroup(name="三峡大坝", file_ids=file_ids[:2]),
+                            SplitGroup(name="三峡人家", file_ids=file_ids[2:]),
+                        ],
+                    )],
+                ),
+                db,
+            )
+            assert resp["data"]["plan_version"] == 2
+
+            data = (await get_plan(plan.id, db))["data"]
+            subs = data["trips_structure"][0]["sub_trips"]
+            assert [s["folder"] for s in subs] == ["三峡大坝", "三峡人家"]
+            assert sorted(s["file_count"] for s in subs) == [2, 2]
+            assert len(data["files"]) == 4
+            assert all("三峡" in f["target_rel_path"] for f in data["files"])
         finally:
             await db.close()
             await engine.dispose()

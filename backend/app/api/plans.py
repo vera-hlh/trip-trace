@@ -63,6 +63,16 @@ class TripMerge(BaseModel):
     target_id: int
 
 
+class SplitGroup(BaseModel):
+    name: str
+    file_ids: list[int]
+
+
+class TripSplit(BaseModel):
+    trip_id: int
+    groups: list[SplitGroup]
+
+
 class ContainerGroup(BaseModel):
     name: str
     sub_trip_ids: list[int]
@@ -71,6 +81,7 @@ class ContainerGroup(BaseModel):
 class PlanPatchRequest(BaseModel):
     plan_version: int
     renames: list[TripRename] = []
+    splits: list[TripSplit] = []
     merges: list[TripMerge] = []
     containers: list[ContainerGroup] = []
     archive_mode: str | None = None
@@ -346,6 +357,125 @@ async def create_plan(
     }
 
 
+async def _apply_trip_split(
+    db: AsyncSession,
+    plan_id: int,
+    trips: dict[int, PlanTrip],
+    split: TripSplit,
+) -> None:
+    """把一个子行程按 PlanFile.id 分成多个子行程（完整划分）。"""
+    from collections import Counter
+
+    source = trips.get(split.trip_id)
+    if not source or source.kind != "sub":
+        raise HTTPException(status_code=400, detail=f"子行程不存在: {split.trip_id}")
+    if len(split.groups) < 2:
+        raise HTTPException(status_code=400, detail="拆分至少需要 2 组")
+
+    rows = (
+        await db.execute(
+            select(PlanFile).where(
+                PlanFile.plan_id == plan_id,
+                PlanFile.trip_id == source.id,
+            )
+        )
+    ).scalars().all()
+    by_id = {pf.id: pf for pf in rows}
+    if not by_id:
+        raise HTTPException(status_code=400, detail="子行程没有文件，无法拆分")
+
+    assigned: set[int] = set()
+    names: set[str] = set()
+    existing_names = {
+        t.folder_name for t in trips.values()
+        if t.kind == "sub" and t.parent_id == source.parent_id and t.id != source.id
+    }
+    parsed: list[tuple[str, set[int]]] = []
+    for group in split.groups:
+        name = _clean_name(group.name, "新子行程")
+        if name in names or name in existing_names:
+            raise HTTPException(status_code=400, detail=f"子行程名称重复: {name}")
+        ids = set(group.file_ids)
+        if not ids or len(ids) != len(group.file_ids):
+            raise HTTPException(status_code=400, detail=f"分组 {name} 的文件为空或有重复")
+        if ids & assigned:
+            raise HTTPException(status_code=400, detail=f"分组 {name} 有重复文件")
+        if not ids <= set(by_id):
+            raise HTTPException(status_code=400, detail=f"分组 {name} 包含不属于该子行程的文件")
+        assigned |= ids
+        names.add(name)
+        parsed.append((name, ids))
+
+    if assigned != set(by_id):
+        raise HTTPException(status_code=400, detail="拆分必须覆盖原子行程的所有文件")
+
+    media_ids = [by_id[fid].media_file_id for fid in assigned if by_id[fid].media_file_id]
+    media_rows = []
+    if media_ids:
+        media_rows = (
+            await db.execute(
+                select(
+                    MediaFile.id,
+                    MediaFile.datetime_original,
+                    MediaFile.area_name,
+                ).where(MediaFile.id.in_(media_ids))
+            )
+        ).all()
+    date_map = {row[0]: row[1] for row in media_rows}
+    area_map = {row[0]: row[2] for row in media_rows}
+
+    parent_id = source.parent_id
+    created: list[PlanTrip] = []
+    for name, ids in parsed:
+        dates = sorted(
+            date_map[by_id[fid].media_file_id]
+            for fid in ids
+            if by_id[fid].media_file_id in date_map
+            and date_map[by_id[fid].media_file_id]
+        )
+        areas = [
+            area_map[by_id[fid].media_file_id]
+            for fid in ids
+            if by_id[fid].media_file_id in area_map
+            and area_map[by_id[fid].media_file_id]
+        ]
+        area_name = Counter(areas).most_common(1)[0][0] if areas else ""
+        row = PlanTrip(
+            plan_id=plan_id,
+            parent_id=parent_id,
+            kind="sub",
+            folder_name=name,
+            display_name=name,
+            start_date=dates[0] if dates else source.start_date,
+            end_date=dates[-1] if dates else source.end_date,
+            sequence_num=0,
+            location_label=area_name or source.location_label,
+            area_name=area_name,
+            container_name=source.container_name,
+            sort_order=0,
+        )
+        db.add(row)
+        await db.flush()
+        created.append(row)
+        for fid in ids:
+            by_id[fid].trip_id = row.id
+
+    await db.delete(source)
+    await db.flush()
+    trips.pop(source.id, None)
+    for row in created:
+        trips[row.id] = row
+
+    # 同一大行程内按开始时间重新排序，避免新序号冲突
+    siblings = sorted(
+        (t for t in trips.values() if t.kind == "sub" and t.parent_id == parent_id),
+        key=lambda t: (t.start_date or "", t.id),
+    )
+    for index, sibling in enumerate(siblings, start=1):
+        sibling.sequence_num = index
+        sibling.sort_order = index - 1
+
+
 @router.patch("/archive/plans/{plan_id}")
 async def patch_plan(
     plan_id: int,
@@ -381,7 +511,11 @@ async def patch_plan(
         trip.display_name = name
         trip.folder_name = name
 
-    # 2. 合并
+    # 2. 拆分（必须完整覆盖原子行程）
+    for split in body.splits:
+        await _apply_trip_split(db, plan_id, trips, split)
+
+    # 3. 合并
     for merge in body.merges:
         if not merge.source_ids:
             raise HTTPException(status_code=400, detail="source_ids 不能为空")
@@ -423,7 +557,7 @@ async def patch_plan(
             await db.delete(source)
             trips.pop(source_id, None)
 
-    # 3. 容器分组（空 name 表示移出容器）
+    # 4. 容器分组（空 name 表示移出容器）
     assigned: set[int] = set()
     for group in body.containers:
         container_name = (
@@ -438,7 +572,7 @@ async def patch_plan(
             assigned.add(sub_id)
             sub.container_name = container_name
 
-    # 4. 归档模式（写入 options_json）
+    # 5. 归档模式（写入 options_json）
     if body.archive_mode is not None:
         if body.archive_mode not in _ALLOWED_MODES:
             raise HTTPException(status_code=400, detail=f"未知归档模式: {body.archive_mode}")
@@ -539,6 +673,9 @@ async def get_plan(
                 PlanFile,
                 MediaFile.file_name,
                 MediaFile.original_path,
+                MediaFile.datetime_original,
+                MediaFile.area_name,
+                MediaFile.poi,
             )
             .outerjoin(MediaFile, PlanFile.media_file_id == MediaFile.id)
             .where(PlanFile.plan_id == plan_id)
@@ -548,7 +685,7 @@ async def get_plan(
 
     counts: dict[int, int] = {}
     files = []
-    for plan_file, file_name, original_path in file_rows:
+    for plan_file, file_name, original_path, file_datetime, file_area, file_poi in file_rows:
         counts[plan_file.trip_id] = counts.get(plan_file.trip_id, 0) + 1
         files.append({
             "id": plan_file.id,
@@ -559,6 +696,9 @@ async def get_plan(
             "error": plan_file.error,
             "file_name": file_name,
             "original_path": original_path,
+            "datetime_original": file_datetime,
+            "area_name": file_area or "",
+            "poi": file_poi or "",
         })
 
     big_rows = [t for t in trips if t.kind == "big"]
