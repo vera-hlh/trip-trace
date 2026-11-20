@@ -107,6 +107,7 @@ cd backend
 
 ## 文档
 
+- [开发与验证操作指引](docs/operations-guide.md)（启动、停止、测试、排错）
 - [2026-11-12 分析报告与实施计划](docs/2026-11-12-analysis-and-plan.md)（当前权威）
 - [M7 验证计划与记录](docs/2026-11-13-m7-validation.md)
 - [真实样本验证（东北边境）](docs/2026-11-14-real-sample-validation.md)
