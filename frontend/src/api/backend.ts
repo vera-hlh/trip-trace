@@ -90,6 +90,7 @@ export interface PlanTripNode {
   end_date: string | null;
   sequence_num?: number | null;
   location?: string;
+  area_name?: string;
   file_count?: number;
   total_files?: number;
   sub_trips?: PlanTripNode[];

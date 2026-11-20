@@ -66,6 +66,7 @@ class PlanTrip(Base):
     end_date = Column(String)
     sequence_num = Column(Integer)
     location_label = Column(String)
+    area_name = Column(String)                  # 景区/片区（子行程内一致）
     container_name = Column(String)             # 行程重建的容器层
     sort_order = Column(Integer, default=0, nullable=False)
 

@@ -335,7 +335,7 @@ def _pick_aoi_candidate(aois: list) -> Optional[dict]:
             continue
         type_str = aoi.get("type") or ""
         # 110202 为高德景区 AOI 类型；也接受名称含景区关键字
-        is_scenic = type_str.startswith("110202") or any(
+        is_scenic = type_str.startswith("1102") or any(
             word in name for word in ("景区", "旅游区", "度假区", "风景区")
         )
         if not is_scenic:
@@ -344,7 +344,14 @@ def _pick_aoi_candidate(aois: list) -> Optional[dict]:
             distance = float(aoi.get("distance") or 999999)
         except (TypeError, ValueError):
             distance = 999999
-        candidates.append((0 if type_str.startswith("110202") else 1, distance, aoi))
+        # 110200/110202 是景区/国家级景点，优先于 110209 观景点等子类型
+        if type_str.startswith("110200") or type_str.startswith("110202"):
+            rank = 0
+        elif type_str.startswith("1102"):
+            rank = 1
+        else:
+            rank = 2
+        candidates.append((rank, distance, aoi))
     if not candidates:
         return None
     candidates.sort(key=lambda item: (item[0], item[1]))
@@ -400,7 +407,7 @@ async def _resolve_amap_parent(
     for poi in reversed(chain):
         type_str = poi.get("type") or ""
         if (
-            type_str.startswith("110202")
+            type_str.startswith("1102")
             or "国家级景点" in type_str
             or type_str == "风景名胜;风景名胜;风景名胜"
         ):
@@ -413,7 +420,7 @@ async def _resolve_amap_parent(
         return None
 
     confidence = 0.85 if (
-        type_str.startswith("110202") or "国家级景点" in type_str
+        type_str.startswith("1102") or "国家级景点" in type_str
     ) else 0.65
     candidate = _amap_area_candidate(
         selected, source="amap_parent", confidence=confidence
@@ -512,7 +519,7 @@ async def reverse_geocode_gaode(
                 name = candidate["name"]
                 type_str = aoi.get("type") or ""
                 if name and (
-                    type_str.startswith("110202")
+                    type_str.startswith("1102")
                     or any(word in name for word in ("景区", "旅游区", "度假区", "风景区"))
                 ):
                     area_candidates.append(candidate)

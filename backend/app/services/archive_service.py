@@ -67,6 +67,7 @@ class MediaItem:
     district: str = ""       # 区县名
     township: str = ""       # 乡镇名（如北极镇）
     poi: str = ""            # 景点/地标名（如冰雪大世界）
+    area_name: str = ""      # 景区/片区（如三峡大坝旅游区）
     country: str = ""        # 国家名（境外）
     country_code: str = ""
     has_gps: bool = False
@@ -111,6 +112,7 @@ class SubTrip:
     start_date: datetime
     end_date: datetime
     items: list[MediaItem] = field(default_factory=list)
+    area_name: str = ""          # 景区/片区（子行程内一致）
     user_modified: bool = False  # 是否经过用户手动修改
 
     @property
@@ -327,9 +329,15 @@ def _location_key_to_label(location_key: str) -> str:
 def _get_location_city(item: MediaItem) -> str:
     """
     从 MediaItem 获取最具体的位置标签（用于子行程命名）
-    优先级：POI > 乡镇 > 区县 > 城市 > location_key 提取
+
+    优先级：景区 > POI > 乡镇 > 区县 > 城市 > location_key 提取
     """
-    return item.best_location_label or _location_key_to_label(item.location_key) or "未知"
+    return (
+        item.area_name
+        or item.best_location_label
+        or _location_key_to_label(item.location_key)
+        or "未知"
+    )
 
 
 def segment_into_trips(
@@ -385,6 +393,12 @@ def segment_into_trips(
 
         prev_loc = prev.location_key
         curr_loc = curr.location_key
+
+        # 规则1.5：景区变化 → 强制新子行程（即使时间差很短）
+        if prev.area_name and curr.area_name and prev.area_name != curr.area_name:
+            sub_trip_segments.append(current_segment)
+            current_segment = [curr]
+            continue
 
         # 规则2：同一地点 → 直接合并（无论时间多长）
         if curr_loc and prev_loc and curr_loc == prev_loc:
@@ -444,10 +458,12 @@ def _build_big_trips(
         seg_start = min(seg_times)
         seg_end = max(seg_times)
 
-        # 获取主要地点（出现次数最多的城市）
+        # 获取主要景区/地点（景区优先，用于子行程命名与归档目录）
         from collections import Counter
+        areas = [it.area_name for it in seg if it.has_gps and it.area_name]
+        main_area = Counter(areas).most_common(1)[0][0] if areas else ""
         cities = [_get_location_city(it) for it in seg if it.has_gps]
-        main_city = Counter(cities).most_common(1)[0][0] if cities else "未知"
+        main_city = main_area or (Counter(cities).most_common(1)[0][0] if cities else "未知")
 
         # 判断是否需要开始新的大行程
         need_new_big = (current_big is None)
@@ -478,6 +494,7 @@ def _build_big_trips(
             start_date=seg_start,
             end_date=seg_end,
             items=seg,
+            area_name=main_area,
         )
         current_big.sub_trips.append(sub)
         current_big.end_date = max(current_big.end_date, seg_end)
@@ -574,19 +591,23 @@ def infer_location_for_gps_less(
         # 推断逻辑
         inferred_loc_key = ""
         inferred_city = ""
+        inferred_area = ""
 
         if prev_ref and next_ref:
             if prev_ref.location_key == next_ref.location_key:
                 # 前后位置相同 → 推断（最可信）
                 inferred_loc_key = prev_ref.location_key
                 inferred_city = prev_ref.city
+                inferred_area = prev_ref.area_name
             # else: 前后不同（路途中），不推断
         elif prev_ref:
             inferred_loc_key = prev_ref.location_key
             inferred_city = prev_ref.city
+            inferred_area = prev_ref.area_name
         elif next_ref:
             inferred_loc_key = next_ref.location_key
             inferred_city = next_ref.city
+            inferred_area = next_ref.area_name
 
         if inferred_loc_key:
             # 用推断位置创建新的 MediaItem（has_gps 仍为 False，标记原本无GPS）
@@ -594,6 +615,7 @@ def infer_location_for_gps_less(
                 item,
                 location_key=inferred_loc_key,
                 city=inferred_city,
+                area_name=inferred_area,
             ))
             logger.debug(
                 f"GPS推断：{item.file_name} → {inferred_city or inferred_loc_key}"

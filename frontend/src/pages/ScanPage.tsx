@@ -720,6 +720,7 @@ export default function ScanPage() {
           folder: sub.folder,
           displayName: sub.display_name || sub.folder,
           location: sub.location || "",
+          areaName: sub.area_name || "",
           start_date: sub.start_date,
           end_date: sub.end_date,
           file_count: sub.file_count ?? 0,

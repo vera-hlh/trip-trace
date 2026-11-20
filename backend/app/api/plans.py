@@ -96,6 +96,9 @@ def _build_media_items(db_files: list) -> list[MediaItem]:
         location_key = ""
         if f.has_gps and f.city:
             location_key = f"{f.country or 'CN'}/{f.province or ''}/{f.city}"
+            area_name = getattr(f, "area_name", "") or ""
+            if area_name:
+                location_key = f"{location_key}/{area_name}"
 
         media_items.append(MediaItem(
             file_path=f.original_path,
@@ -107,6 +110,7 @@ def _build_media_items(db_files: list) -> list[MediaItem]:
             district=f.district or "",
             township=getattr(f, "township", "") or "",
             poi=f.poi or "",
+            area_name=getattr(f, "area_name", "") or "",
             country=f.country or "",
             country_code=f.country or "CN",
             has_gps=f.has_gps,
@@ -271,6 +275,7 @@ async def build_plan_from_files(
                 end_date=_iso(sub.end_date),
                 sequence_num=sub.sequence_num,
                 location_label=sub.location_label,
+                area_name=sub.area_name or "",
                 sort_order=sub_index,
             )
             db.add(sub_row)
@@ -571,6 +576,7 @@ async def get_plan(
                 "folder": sub.folder_name,
                 "display_name": sub.display_name or sub.folder_name,
                 "location": sub.location_label or "",
+                "area_name": sub.area_name or "",
                 "start_date": sub.start_date,
                 "end_date": sub.end_date,
                 "sequence_num": sub.sequence_num,

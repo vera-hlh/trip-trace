@@ -34,6 +34,7 @@ export interface SubTripData {
   folder: string;      // 原始文件夹名（后端生成）
   displayName: string; // 用户可编辑显示名称
   location: string;
+  areaName?: string;
   start_date: string | null;
   end_date: string | null;
   file_count: number;

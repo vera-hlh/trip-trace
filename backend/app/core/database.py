@@ -82,6 +82,7 @@ async def _run_migrations() -> None:
         ("geocode_cache", "area_source",  "VARCHAR"),
         ("geocode_cache", "area_confidence", "FLOAT"),
         ("geocode_cache", "area_candidates_json", "TEXT"),
+        ("plan_trips", "area_name", "VARCHAR"),
     ]
 
     async with AsyncSessionLocal() as session:
